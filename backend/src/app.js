@@ -1,5 +1,7 @@
 'use strict';
+require('dotenv').config();
 
+const authRoutes = require('./routes/auth');
 const express       = require('express');
 const cors          = require('cors');
 const morgan        = require('morgan');
@@ -52,6 +54,7 @@ app.use('/api/permissions',  permissionRoutes);
 app.use('/api/hooks',        hookRoutes);
 app.use('/api/activity',     activityRoutes);
 app.use('/api/dashboard',    dashboardRoutes);
+app.use('/api/auth', authRoutes);
 
 // ─── 404 ──────────────────────────────────────────────────────────────────
 app.use((_req, res) => {

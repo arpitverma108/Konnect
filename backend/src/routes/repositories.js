@@ -1,4 +1,3 @@
-// repositories.js
 'use strict';
 
 const express     = require('express');
@@ -10,6 +9,7 @@ const db          = require('../config/database');
 const apacheCfg   = require('../config/apache');
 const validate    = require('../middleware/validate');
 const wrap        = require('../middleware/asyncWrapper');
+const auth        = require('../middleware/auth'); // 🔐 ADDED
 const svnSvc      = require('../services/svnService');
 const activitySvc = require('../services/activityService');
 const authzSvc    = require('../services/authzService');
@@ -40,15 +40,15 @@ router.get('/', wrap(async (req, res) => {
   res.json(rows);
 }));
 
-// POST /api/repositories
-router.post('/', validate(createSchema), wrap(async (req, res) => {
+// 🔐 CREATE REPO (PROTECTED)
+router.post('/', auth, validate(createSchema), wrap(async (req, res) => {
   const { name, description, createStandardLayout } = req.body;
   const diskPath = path.join(apacheCfg.reposRoot, name);
 
   // 1. Create SVN repo on disk
   await svnSvc.createRepository(diskPath);
 
-  // 2. Optionally create trunk/branches/tags
+  // 2. Create trunk/branches/tags
   if (createStandardLayout) {
     await svnSvc.createStandardLayout(diskPath);
   }
@@ -61,14 +61,14 @@ router.post('/', validate(createSchema), wrap(async (req, res) => {
     [name, description || null, diskPath]
   );
 
-  // 4. Rebuild authz to include new repo entry
+  // 4. Rebuild authz
   await authzSvc.rebuildAuthzFile(db);
 
   res.status(201).json(rows[0]);
 }));
 
 // GET /api/repositories/:id
-router.get('/:id', wrap(async (req, res) => {
+router.get('/:id(\\d+)', wrap(async (req, res) => {
   const { rows } = await db.query(
     `SELECT r.*,
        (SELECT COUNT(*) FROM activity a WHERE a.repo_id = r.id) AS commit_count
@@ -76,9 +76,9 @@ router.get('/:id', wrap(async (req, res) => {
      WHERE r.id = $1`,
     [req.params.id]
   );
+
   if (!rows[0]) return res.status(404).json({ error: 'Repository not found' });
 
-  // Add SVN URL info
   const repo = rows[0];
   repo.svn_url = `http://localhost/svn/${repo.name}`;
   repo.youngest_revision = await svnSvc.getYoungestRevision(repo.disk_path).catch(() => 0);
@@ -86,9 +86,10 @@ router.get('/:id', wrap(async (req, res) => {
   res.json(repo);
 }));
 
-// PUT /api/repositories/:id
-router.put('/:id', validate(updateSchema), wrap(async (req, res) => {
+// 🔐 UPDATE REPO
+router.put('/:id(\\d+)', auth, validate(updateSchema), wrap(async (req, res) => {
   const { description, is_active } = req.body;
+
   const { rows } = await db.query(
     `UPDATE repositories
      SET description = COALESCE($1, description),
@@ -97,16 +98,19 @@ router.put('/:id', validate(updateSchema), wrap(async (req, res) => {
      RETURNING *`,
     [description, is_active, req.params.id]
   );
+
   if (!rows[0]) return res.status(404).json({ error: 'Repository not found' });
+
   res.json(rows[0]);
 }));
 
-// DELETE /api/repositories/:id
-router.delete('/:id', wrap(async (req, res) => {
+// 🔐 DELETE REPO
+router.delete('/:id(\\d+)', auth, wrap(async (req, res) => {
   const { rows } = await db.query(
     'SELECT * FROM repositories WHERE id = $1',
     [req.params.id]
   );
+
   if (!rows[0]) return res.status(404).json({ error: 'Repository not found' });
 
   const repo = rows[0];
@@ -114,7 +118,7 @@ router.delete('/:id', wrap(async (req, res) => {
   // Delete from disk
   await svnSvc.deleteRepository(repo.disk_path);
 
-  // Delete from DB (cascades to permissions, hooks, activity)
+  // Delete from DB
   await db.query('DELETE FROM repositories WHERE id = $1', [req.params.id]);
 
   // Rebuild authz
@@ -124,28 +128,37 @@ router.delete('/:id', wrap(async (req, res) => {
 }));
 
 // GET /api/repositories/:id/log
-router.get('/:id/log', wrap(async (req, res) => {
+router.get('/:id(\\d+)/log', wrap(async (req, res) => {
   const { rows } = await db.query(
     'SELECT * FROM repositories WHERE id = $1',
     [req.params.id]
   );
+
   if (!rows[0]) return res.status(404).json({ error: 'Repository not found' });
 
   const limit = Math.min(parseInt(req.query.limit || '50', 10), 500);
   const log   = await svnSvc.getLog(rows[0].disk_path, limit);
+
   res.json(log);
 }));
 
-// POST /api/repositories/:id/sync-activity
-router.post('/:id/sync-activity', wrap(async (req, res) => {
+// 🔐 SYNC ACTIVITY
+router.post('/:id(\\d+)/sync-activity', auth, wrap(async (req, res) => {
   const { rows } = await db.query(
     'SELECT * FROM repositories WHERE id = $1',
     [req.params.id]
   );
+
   if (!rows[0]) return res.status(404).json({ error: 'Repository not found' });
 
   const limit = Math.min(parseInt(req.query.limit || '200', 10), 1000);
-  const count = await activitySvc.syncRepoActivity(db, rows[0].id, rows[0].disk_path, limit);
+  const count = await activitySvc.syncRepoActivity(
+    db,
+    rows[0].id,
+    rows[0].disk_path,
+    limit
+  );
+
   res.json({ synced: count });
 }));
 

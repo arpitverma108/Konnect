@@ -1,4 +1,4 @@
-// schema.sql
+
 -- SVNBridge PostgreSQL Schema
 -- Run: psql -U svnbridge_user -d svnbridge -f schema.sql
 

@@ -1,34 +1,35 @@
-// userService.js
 'use strict';
 
-const { execFile }  = require('child_process');
-const { promisify } = require('util');
-const fse           = require('fs-extra');
-const bcrypt        = require('bcrypt');
-const apacheCfg     = require('../config/apache');
-const authzService  = require('./authzService');
-const logger        = require('../config/logger');
+const fs = require('fs').promises;
+const bcrypt = require('bcrypt');
+const apacheMD5 = require('apache-md5');
+const apacheCfg = require('../config/apache');
+const authzService = require('./authzService');
+const logger = require('../config/logger');
 
-const execFileAsync = promisify(execFile);
 const BCRYPT_ROUNDS = parseInt(process.env.BCRYPT_ROUNDS || '12', 10);
 
-// ─── htpasswd file helpers ────────────────────────────────────────────────────
+// ───────────── READ HTPASSWD ─────────────
 
-/**
- * Read the htpasswd file and return a map of { username: hash }.
- */
 async function readHtpasswd() {
-  const htpasswdPath = apacheCfg.htpasswdPath;
+  const filePath = apacheCfg.htpasswdPath;
+
+  console.log("READ PATH:", filePath);
+
   try {
-    const content = await fse.readFile(htpasswdPath, 'utf8');
+    const content = await fs.readFile(filePath, 'utf8');
+
     const map = {};
-    for (const line of content.split('\n')) {
+    const lines = content.split('\n');
+
+    for (const line of lines) {
       const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const colonIdx = trimmed.indexOf(':');
-      if (colonIdx === -1) continue;
-      map[trimmed.slice(0, colonIdx)] = trimmed.slice(colonIdx + 1);
+      if (!trimmed) continue;
+
+      const [user, hash] = trimmed.split(':');
+      map[user] = hash;
     }
+
     return map;
   } catch (err) {
     if (err.code === 'ENOENT') return {};
@@ -36,49 +37,72 @@ async function readHtpasswd() {
   }
 }
 
-/**
- * Write the htpasswd map back to file atomically.
- */
+// ───────────── WRITE HTPASSWD ─────────────
+
 async function writeHtpasswd(map) {
-  const htpasswdPath = apacheCfg.htpasswdPath;
-  const tmp = htpasswdPath + '.tmp';
-  const lines = Object.entries(map).map(([u, h]) => `${u}:${h}`).join('\n');
-  await fse.ensureFile(htpasswdPath);
-  await fse.writeFile(tmp, lines + '\n', 'utf8');
-  await fse.move(tmp, htpasswdPath, { overwrite: true });
+  const filePath = apacheCfg.htpasswdPath;
+
+  console.log("WRITE PATH:", filePath);
+
+  let content = '';
+  for (const user in map) {
+    content += `${user}:${map[user]}\n`;
+  }
+
+  console.log("WRITE CONTENT:\n", content);
+
+  await fs.writeFile(filePath, content, 'utf8');
+  console.log("WRITE DONE ✅");
 }
 
-// ─── User CRUD ────────────────────────────────────────────────────────────────
+// ───────────── CREATE USER ─────────────
 
-/**
- * Create a user in the DB and add to htpasswd.
- */
 async function createUser(db, { username, password, email, fullName }) {
-  // 1. Hash password (never stored in DB)
-  const hash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+  console.log("STEP 1: Creating user:", username);
 
-  // 2. Write to htpasswd
+  if (!username || !password) {
+    const err = new Error('Username and password required');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // 1. Hash for DB
+  const dbHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+
+  // 2. Read htpasswd
   const map = await readHtpasswd();
+
+  console.log("STEP 2: Map BEFORE:", map);
+
   if (map[username]) {
-    const err = new Error(`User '${username}' already exists in htpasswd`);
+    const err = new Error(`User '${username}' already exists`);
     err.statusCode = 409;
     throw err;
   }
-  map[username] = hash;
+
+  // 3. Add Apache user
+  map[username] = apacheMD5(password);
+
+  console.log("STEP 3: Map AFTER:", map);
+
+  // 4. Write file
   await writeHtpasswd(map);
 
-  // 3. Insert into DB
+  console.log("STEP 4: writeHtpasswd executed");
+
+  // 5. Insert DB
   let user;
   try {
     const result = await db.query(
-      `INSERT INTO users (username, email, full_name)
-       VALUES ($1, $2, $3)
+      `INSERT INTO users (username, password_hash, email, full_name)
+       VALUES ($1, $2, $3, $4)
        RETURNING *`,
-      [username, email || null, fullName || null]
+      [username, dbHash, email || null, fullName || null]
     );
+
     user = result.rows[0];
   } catch (err) {
-    // Roll back htpasswd entry on DB failure
+    // rollback file if DB fails
     const map2 = await readHtpasswd();
     delete map2[username];
     await writeHtpasswd(map2);
@@ -89,9 +113,8 @@ async function createUser(db, { username, password, email, fullName }) {
   return user;
 }
 
-/**
- * List all users.
- */
+// ───────────── OTHER FUNCTIONS ─────────────
+
 async function listUsers(db) {
   const result = await db.query(
     `SELECT u.*,
@@ -105,9 +128,6 @@ async function listUsers(db) {
   return result.rows;
 }
 
-/**
- * Get a single user by id.
- */
 async function getUserById(db, id) {
   const result = await db.query(
     `SELECT u.*,
@@ -119,17 +139,16 @@ async function getUserById(db, id) {
      GROUP BY u.id`,
     [id]
   );
+
   if (!result.rows[0]) {
     const err = new Error('User not found');
     err.statusCode = 404;
     throw err;
   }
+
   return result.rows[0];
 }
 
-/**
- * Update user metadata (email / full_name / is_active).
- */
 async function updateUser(db, id, { email, fullName, isActive }) {
   const result = await db.query(
     `UPDATE users
@@ -140,52 +159,50 @@ async function updateUser(db, id, { email, fullName, isActive }) {
      RETURNING *`,
     [email, fullName, isActive, id]
   );
+
   if (!result.rows[0]) {
     const err = new Error('User not found');
     err.statusCode = 404;
     throw err;
   }
+
   return result.rows[0];
 }
 
-/**
- * Reset a user's password in htpasswd only.
- */
 async function resetPassword(username, newPassword) {
   const map = await readHtpasswd();
+
   if (!map[username]) {
-    const err = new Error(`User '${username}' not found in htpasswd`);
+    const err = new Error(`User '${username}' not found`);
     err.statusCode = 404;
     throw err;
   }
-  map[username] = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+
+  map[username] = apacheMD5(newPassword);
   await writeHtpasswd(map);
+
   logger.info(`Password reset for user: ${username}`);
 }
 
-/**
- * Delete a user — removes from htpasswd, DB, permissions, and groups.
- * Rebuilds authz file after.
- */
 async function deleteUser(db, id) {
-  // Fetch username first
-  const { rows } = await db.query('SELECT username FROM users WHERE id = $1', [id]);
+  const { rows } = await db.query(
+    'SELECT username FROM users WHERE id = $1',
+    [id]
+  );
+
   if (!rows[0]) {
     const err = new Error('User not found');
     err.statusCode = 404;
     throw err;
   }
+
   const { username } = rows[0];
 
-  // Remove from htpasswd
   const map = await readHtpasswd();
   delete map[username];
   await writeHtpasswd(map);
 
-  // DB cascade handles group_members and permissions (ON DELETE CASCADE)
   await db.query('DELETE FROM users WHERE id = $1', [id]);
-
-  // Rebuild authz
   await authzService.rebuildAuthzFile(db);
 
   logger.info(`User deleted: ${username}`);
