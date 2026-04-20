@@ -14,7 +14,7 @@ exports.register = async (req, res) => {
     'INSERT INTO users (username, password_hash) VALUES ($1, $2) RETURNING *',
     [username, hashed]
   );
-
+ 
   res.json(result.rows[0]);
 };
 
