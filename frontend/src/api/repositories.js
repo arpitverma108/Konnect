@@ -1,33 +1,37 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import apiClient from './index'
-import { fakeApi } from './client'
 
-export const getRepositories = () => {
-  return fakeApi([
-    { id: 1, name: 'frontend-app', owner: 'Kunal' },
-    { id: 2, name: 'backend-api', owner: 'Rahul' },
-  ])
-}
+// ─── QUERY KEYS ─────────────────────────────────────────
+
 const KEYS = {
   all: ['repositories'],
   detail: (id) => ['repositories', id],
 }
 
-// ─── Fetchers ─────────────────────────────────────────────────────────────────
+// ─── API CALLS (REAL BACKEND) ───────────────────────────
 
-const fetchRepositories = () => apiClient.get('/repositories')
+export const getRepositories = () => apiClient.get('/repositories')
+
 const fetchRepository = (id) => apiClient.get(`/repositories/${id}`)
 const createRepository = (data) => apiClient.post('/repositories', data)
-const updateRepository = ({ id, ...data }) => apiClient.put(`/repositories/${id}`, data)
-const deleteRepository = (id) => apiClient.delete(`/repositories/${id}`)
-const syncActivity = (id) => apiClient.post(`/repositories/${id}/sync-activity`)
-const fetchRepoLog = (id, limit) => apiClient.get(`/repositories/${id}/log?limit=${limit}`)
-const fetchRepoLs = (id, path) => apiClient.get(`/repositories/${id}/ls?path=${path}`)
+const updateRepository = ({ id, ...data }) =>
+  apiClient.put(`/repositories/${id}`, data)
+const deleteRepository = (id) =>
+  apiClient.delete(`/repositories/${id}`)
+const syncActivity = (id) =>
+  apiClient.post(`/repositories/${id}/sync-activity`)
+const fetchRepoLog = (id, limit) =>
+  apiClient.get(`/repositories/${id}/log?limit=${limit}`)
+const fetchRepoLs = (id, path) =>
+  apiClient.get(`/repositories/${id}/ls?path=${path}`)
 
-// ─── Hooks ────────────────────────────────────────────────────────────────────
+// ─── REACT QUERY HOOKS ─────────────────────────────────
 
 export const useRepositories = () =>
-  useQuery({ queryKey: KEYS.all, queryFn: fetchRepositories })
+  useQuery({
+    queryKey: KEYS.all,
+    queryFn: getRepositories,
+  })
 
 export const useRepository = (id) =>
   useQuery({
@@ -35,6 +39,37 @@ export const useRepository = (id) =>
     queryFn: () => fetchRepository(id),
     enabled: !!id,
   })
+
+export const useCreateRepository = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: createRepository,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.all })
+    },
+  })
+}
+
+export const useUpdateRepository = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: updateRepository,
+    onSuccess: (_, vars) => {
+      qc.invalidateQueries({ queryKey: KEYS.all })
+      qc.invalidateQueries({ queryKey: KEYS.detail(vars.id) })
+    },
+  })
+}
+
+export const useDeleteRepository = () => {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: deleteRepository,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: KEYS.all })
+    },
+  })
+}
 
 export const useSyncActivity = () => {
   const qc = useQueryClient()
@@ -61,30 +96,3 @@ export const useRepoLs = (id, path = '/') =>
     queryFn: () => fetchRepoLs(id, path),
     enabled: !!id,
   })
-
-export const useCreateRepository = () => {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: createRepository,
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.all }),
-  })
-}
-
-export const useUpdateRepository = () => {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: updateRepository,
-    onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: KEYS.all })
-      qc.invalidateQueries({ queryKey: KEYS.detail(vars.id) })
-    },
-  })
-}
-
-export const useDeleteRepository = () => {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: deleteRepository,
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.all }),
-  })
-}

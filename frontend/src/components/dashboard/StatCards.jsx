@@ -1,43 +1,44 @@
 import React from 'react'
-import { Row, Col } from 'antd'
+import { Row, Col, Skeleton } from 'antd'
 import { FolderTree, Users, Webhook, Activity } from 'lucide-react'
 
-const STAT_CONFIG = [
-  {
-    key: 'repositories',
-    title: 'Total Repositories',
-    icon: <FolderTree size={22} color="#1E6FD9" />,
-    bg: 'rgba(30, 111, 217, 0.08)',
-    value: 13,
-    trend: '+2 this week',
-  },
-  {
-    key: 'users',
-    title: 'Active Users',
-    icon: <Users size={22} color="#16a34a" />,
-    bg: 'rgba(22, 163, 74, 0.08)',
-    value: 76,
-    trend: '+6 new users',
-  },
-  {
-    key: 'groups',
-    title: 'Groups',
-    icon: <Webhook size={22} color="#d97706" />,
-    bg: 'rgba(217, 119, 6, 0.08)',
-    value: 3,
-    trend: 'No change',
-  },
-  {
-    key: 'commits',
-    title: 'Commits Today',
-    icon: <Activity size={22} color="#dc2626" />,
-    bg: 'rgba(220, 38, 38, 0.08)',
-    value: 68,
-    trend: '+7 today',
-  },
-]
+const StatCards = ({ stats, loading }) => {
 
-const StatCards = () => {
+  const STAT_CONFIG = [
+    {
+      key: 'repositories',
+      title: 'Total Repositories',
+      icon: <FolderTree size={22} color="#1E6FD9" />,
+      bg: 'rgba(30, 111, 217, 0.08)',
+      value: stats?.repositories,
+      trend: stats?.repoTrend || '',
+    },
+    {
+      key: 'users',
+      title: 'Active Users',
+      icon: <Users size={22} color="#16a34a" />,
+      bg: 'rgba(22, 163, 74, 0.08)',
+      value: stats?.users,
+      trend: stats?.userTrend || '',
+    },
+    {
+      key: 'groups',
+      title: 'Groups',
+      icon: <Webhook size={22} color="#d97706" />,
+      bg: 'rgba(217, 119, 6, 0.08)',
+      value: stats?.groups,
+      trend: stats?.groupTrend || '',
+    },
+    {
+      key: 'commits',
+      title: 'Commits Today',
+      icon: <Activity size={22} color="#dc2626" />,
+      bg: 'rgba(220, 38, 38, 0.08)',
+      value: stats?.commitsToday,
+      trend: stats?.commitTrend || '',
+    },
+  ]
+
   return (
     <Row gutter={[20, 20]}>
       {STAT_CONFIG.map((item) => (
@@ -59,7 +60,7 @@ const StatCards = () => {
 
             {/* TITLE */}
             <div style={{
-              color: '#111827',
+              color: 'var(--text-secondary)',
               fontSize: 14,
               fontWeight: 600
             }}>
@@ -70,22 +71,25 @@ const StatCards = () => {
             <div style={{
               fontSize: 28,
               fontWeight: 700,
-              color: '#000',
+              color: 'var(--text-main)',
               margin: '6px 0'
             }}>
-              {item.value}
+              {loading
+                ? <Skeleton.Input active size="small" style={{ width: 60 }} />
+                : item.value ?? 0}
             </div>
 
             {/* TREND */}
             <div style={{
-              color: '#4b5563',
+              color: 'var(--text-muted)',
               fontSize: 13
             }}>
-              {item.trend}
+              {loading
+                ? <Skeleton.Input active size="small" style={{ width: 80 }} />
+                : item.trend}
             </div>
 
           </div>
-          
         </Col>
       ))}
     </Row>

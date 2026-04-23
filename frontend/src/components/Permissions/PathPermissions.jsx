@@ -32,12 +32,6 @@ const PathPermissions = ({ repoId, selectedPath, onSelectPath }) => {
     if (children) return;
     
     try {
-      // Need to fetch children for this specific path
-      // Since this is inside a component, we can't call the hook directly in an async function.
-      // However, we can use the queryClient or a manual fetch.
-      // For simplicity in this implementation, we'll assume the top level 
-      // is enough for most authz cases, OR we'll implement a simple fetcher.
-      
       const response = await fetch(`/api/repositories/${repoId}/ls?path=${key}`);
       const data = await response.json();
       

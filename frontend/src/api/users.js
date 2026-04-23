@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import apiClient from './index'
-
+export const getUsers = () => apiClient.get('/users')
 const KEYS = {
   all: ['users'],
   detail: (id) => ['users', id],

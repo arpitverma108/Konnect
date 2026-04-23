@@ -1,24 +1,9 @@
-// RepoList.jsx
 import { Row, Col, Empty, Skeleton, Alert, Card } from 'antd'
-// import { useRepositories } from '../../api/repositories'  // ❌ Disabled API (no backend)
-// import RepoCard from './RepoCard'  // ❌ Disabled (causing crash if not present)
 
-const RepoList = ({ searchTerm = "" }) => {
+const RepoList = ({ repos = [], loading = false, searchTerm = "" }) => {
 
-  // const { data: repos = [], isLoading, isError } = useRepositories() // ❌ API disabled
-
-  // ✅ Mock data (frontend-only)
-  const repos = [
-    { id: 1, name: "Project Alpha", description: "Main project repo" },
-    { id: 2, name: "Frontend UI", description: "React frontend" },
-    { id: 3, name: "Backend API", description: "Spring Boot backend" },
-    { id: 4, name: "Testing Repo", description: "Testing features" }
-  ]
-
-  const isLoading = false
-  const isError = false
-
-  if (isLoading) {
+  // LOADING STATE
+  if (loading) {
     return (
       <Row gutter={[24, 24]}>
         {[1, 2, 3, 4].map(i => (
@@ -32,17 +17,35 @@ const RepoList = ({ searchTerm = "" }) => {
     )
   }
 
+  // EMPTY STATE (NO DATA)
+  if (!loading && repos.length === 0) {
+    return (
+      <Empty
+        description={
+          <span style={{ color: 'var(--text-muted)' }}>
+            No repositories yet. Create one!
+          </span>
+        }
+        style={{ marginTop: 60 }}
+      />
+    )
+  }
+
+  //  FILTER
   const filteredRepos = repos.filter(repo =>
-    repo.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (repo.description && repo.description.toLowerCase().includes(searchTerm.toLowerCase()))
+    repo.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    repo.description?.toLowerCase().includes(searchTerm.toLowerCase())
   )
 
+  // EMPTY SEARCH RESULT
   if (filteredRepos.length === 0) {
     return (
       <Empty
-        description={<span style={{ color: 'var(--text-muted)' }}>
-          {searchTerm ? `No repositories matching "${searchTerm}"` : 'No repositories yet. Create one!'}
-        </span>}
+        description={
+          <span style={{ color: 'var(--text-muted)' }}>
+            No repositories matching "{searchTerm}"
+          </span>
+        }
         style={{ marginTop: 60 }}
       />
     )
@@ -52,14 +55,15 @@ const RepoList = ({ searchTerm = "" }) => {
     <Row gutter={[24, 24]}>
       {filteredRepos.map(repo => (
         <Col xs={24} sm={12} lg={8} xl={6} key={repo.id}>
-
-          {/* ❌ Old (causing crash if RepoCard missing) */}
-          {/* <RepoCard repo={repo} /> */}
-
-          {/* ✅ Simple card UI replacement */}
+          
           <Card className="premium-card">
-            <h3>{repo.name}</h3>
-            <p style={{ color: '#888' }}>{repo.description}</p>
+            <h3 style={{ color: 'var(--text-main)' }}>
+              {repo.name}
+            </h3>
+
+            <p style={{ color: 'var(--text-muted)' }}>
+              {repo.description || 'No description'}
+            </p>
           </Card>
 
         </Col>

@@ -10,8 +10,8 @@ const { Text } = Typography
 const HOOK_META = {
   'pre-commit':        { color: '#f5a623', desc: 'Runs before a commit is accepted.' },
   'post-commit':       { color: '#7ed321', desc: 'Runs after a successful commit.' },
-  'pre-revprop-change': { color: '#9b59b6', desc: 'Runs before a revision property is changed.' },
-  'post-revprop-change': { color: '#3498db', desc: 'Runs after a revision property is changed.' },
+  'pre-revprop-change':{ color: '#9b59b6', desc: 'Runs before a revision property is changed.' },
+  'post-revprop-change':{ color: '#3498db', desc: 'Runs after a revision property is changed.' },
   'start-commit':      { color: '#e74c3c', desc: 'Runs before the commit transaction starts.' },
 }
 

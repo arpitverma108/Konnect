@@ -1,8 +1,5 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
-/* ───────────────────────────────────────── */
-/* 🎨 DARK THEME (FIXED) */
-/* ───────────────────────────────────────── */
 
 :root {
   --primary-color: #1E6FD9;
@@ -37,11 +34,6 @@ html, body, #root {
   color: var(--text-main);
 }
 
-/* ❌ REMOVED BROKEN GLOBAL COLOR OVERRIDE */
-
-/* ───────────────────────────────────────── */
-/* TYPOGRAPHY */
-/* ───────────────────────────────────────── */
 
 h1, h2, h3, h4, h5, h6 {
   color: var(--text-main);
@@ -60,9 +52,7 @@ p {
   color: var(--text-muted);
 }
 
-/* ───────────────────────────────────────── */
-/* TABLE FIX (MOST IMPORTANT) */
-/* ───────────────────────────────────────── */
+
 
 .ant-table {
   background: var(--bg-surface) !important;
@@ -84,9 +74,6 @@ p {
   background: #21262d !important;
 }
 
-/* ───────────────────────────────────────── */
-/* INPUT FIX */
-/* ───────────────────────────────────────── */
 
 .ant-input {
   background: var(--bg-color) !important;
@@ -94,9 +81,6 @@ p {
   color: var(--text-main) !important;
 }
 
-/* ───────────────────────────────────────── */
-/* GLASS PANEL */
-/* ───────────────────────────────────────── */
 
 .glass-panel {
   background: var(--bg-surface) !important;
@@ -104,9 +88,7 @@ p {
   border-radius: 12px;
 }
 
-/* ───────────────────────────────────────── */
-/* DROPDOWN FIX */
-/* ───────────────────────────────────────── */
+
 
 .ant-dropdown-menu {
   background: var(--bg-surface) !important;
@@ -116,9 +98,6 @@ p {
   color: var(--text-main) !important;
 }
 
-/* ───────────────────────────────────────── */
-/* SCROLLBAR */
-/* ───────────────────────────────────────── */
 
 ::-webkit-scrollbar {
   width: 8px;
@@ -129,7 +108,7 @@ p {
   border-radius: 4px;
 }
 
-/* 🔥 TEXT SELECTION FIX */
+/* TEXT SELECTION FIX */
 ::selection {
   background: #1f6feb;
   color: #ffffff;

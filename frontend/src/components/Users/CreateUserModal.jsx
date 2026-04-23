@@ -1,11 +1,10 @@
-// CreateUserModal.jsx
 import React from 'react'
-import { Modal, Form, Input, Button, Typography, message } from 'antd'
+import { Modal, Form, Input, Typography, message } from 'antd'
 import { useCreateUser } from '../../api/users'
 
 const { Text } = Typography
 
-const CreateUserModal = ({ visible, onClose }) => {
+const CreateUserModal = ({ visible, onClose, onSuccess }) => {
   const [form] = Form.useForm()
   const createMutation = useCreateUser()
 
@@ -14,8 +13,12 @@ const CreateUserModal = ({ visible, onClose }) => {
       createMutation.mutate(values, {
         onSuccess: (data) => {
           message.success(`User "${data?.username || values.username}" created successfully!`)
+          
           form.resetFields()
           onClose()
+
+          // 🔥 IMPORTANT: notify parent to refresh
+          if (onSuccess) onSuccess()
         },
         onError: (err) => {
           const msg = err?.response?.data?.error || 'Failed to create user.'
@@ -60,45 +63,30 @@ const CreateUserModal = ({ visible, onClose }) => {
             { pattern: /^[a-zA-Z0-9_]+$/, message: 'Only alphanumeric characters and underscores allowed.' },
           ]}
         >
-          <Input
-            placeholder="e.g. jdoe"
-            style={{ backgroundColor: 'var(--bg-color)', color: 'var(--text-main)', borderColor: 'var(--border-color)' }}
-          />
+          <Input style={{ backgroundColor: 'var(--bg-color)', color: 'var(--text-main)', borderColor: 'var(--border-color)' }} />
         </Form.Item>
 
-        <Form.Item
-          name="full_name"
-          label={<span style={{ color: 'var(--text-main)' }}>Full Name</span>}
-        >
-          <Input
-            placeholder="e.g. John Doe"
-            style={{ backgroundColor: 'var(--bg-color)', color: 'var(--text-main)', borderColor: 'var(--border-color)' }}
-          />
+        <Form.Item name="full_name" label={<span style={{ color: 'var(--text-main)' }}>Full Name</span>}>
+          <Input style={{ backgroundColor: 'var(--bg-color)', color: 'var(--text-main)', borderColor: 'var(--border-color)' }} />
         </Form.Item>
 
         <Form.Item
           name="email"
           label={<span style={{ color: 'var(--text-main)' }}>Email</span>}
-          rules={[{ type: 'email', message: 'The input is not valid E-mail!' }]}
+          rules={[{ type: 'email', message: 'Invalid email!' }]}
         >
-          <Input
-            placeholder="e.g. jdoe@example.com"
-            style={{ backgroundColor: 'var(--bg-color)', color: 'var(--text-main)', borderColor: 'var(--border-color)' }}
-          />
+          <Input style={{ backgroundColor: 'var(--bg-color)', color: 'var(--text-main)', borderColor: 'var(--border-color)' }} />
         </Form.Item>
 
         <Form.Item
           name="password"
           label={<span style={{ color: 'var(--text-main)' }}>Password</span>}
           rules={[
-            { required: true, message: 'Please input the password!' },
-            { min: 8, message: 'Password must be at least 8 characters long.' },
+            { required: true, message: 'Please input password!' },
+            { min: 8, message: 'Minimum 8 characters required.' },
           ]}
         >
-          <Input.Password
-            placeholder="Secure password"
-            style={{ backgroundColor: 'var(--bg-color)', color: 'var(--text-main)', borderColor: 'var(--border-color)' }}
-          />
+          <Input.Password style={{ backgroundColor: 'var(--bg-color)', color: 'var(--text-main)', borderColor: 'var(--border-color)' }} />
         </Form.Item>
       </Form>
     </Modal>

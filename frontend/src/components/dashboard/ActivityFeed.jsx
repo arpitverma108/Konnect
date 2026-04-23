@@ -38,14 +38,14 @@ const ActivityFeed = ({ data = [], loading = false, title = "Recent Activity" })
               }}>
                 <div style={{ 
                   fontWeight: 600,
-                  color: 'var(--text-main)'     // ✅ FIX
+                  color: 'var(--text-main)'     
                 }}>
                   {act.repo}
                 </div>
 
                 <div style={{ 
                   fontSize: 12, 
-                  color: 'var(--text-muted)'    // ✅ FIX
+                  color: 'var(--text-muted)'    
                 }}>
                   {dayjs(act.time).fromNow()}
                 </div>
@@ -53,7 +53,7 @@ const ActivityFeed = ({ data = [], loading = false, title = "Recent Activity" })
 
               <div style={{ 
                 marginTop: 4,
-                color: 'var(--text-main)'      // ✅ FIX
+                color: 'var(--text-main)'      
               }}>
                 {act.message}
               </div>
@@ -61,7 +61,7 @@ const ActivityFeed = ({ data = [], loading = false, title = "Recent Activity" })
               <div style={{
                 marginTop: 6,
                 fontSize: 13,
-                color: 'var(--text-secondary)'  // ✅ FIX
+                color: 'var(--text-secondary)'  
               }}>
                 {act.author}
               </div>
