@@ -1,4 +1,3 @@
-// svnService.js
 'use strict';
 
 const { execFile }  = require('child_process');
@@ -11,67 +10,100 @@ const logger        = require('../config/logger');
 
 const execFileAsync = promisify(execFile);
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────
 
 function svnadmin(...args) {
-  logger.debug('svnadmin', { args });
   return execFileAsync(apacheCfg.svnadmin, args);
 }
 
 function svn(...args) {
-  logger.debug('svn', { args });
   return execFileAsync(apacheCfg.svn, args);
 }
 
-// Convert a disk path to a file:/// URL (cross-platform)
 function toFileUrl(diskPath) {
-  const normalised = diskPath.replace(/\\/g, '/');
-  return `file:///${normalised.replace(/^\//, '')}`;
+  return `file://${diskPath}`;
 }
 
-// ─── Repository Operations ───────────────────────────────────────────────────
+// ─── REPO CREATION ───────────────────────────────
 
-/**
- * Create a new SVN repository on disk.
- * @param {string} repoPath - Absolute path where the repo should be created.
- */
 async function createRepository(repoPath) {
   await svnadmin('create', repoPath);
   logger.info(`Repository created at ${repoPath}`);
 }
 
-/**
- * Create trunk / branches / tags directories inside the repository.
- * Uses file:// protocol so Apache doesn't need to be running.
- * @param {string} repoPath - Absolute path to the SVN repository.
- */
 async function createStandardLayout(repoPath) {
   const repoUrl = toFileUrl(repoPath);
+
   await svn(
     'mkdir',
     '--parents',
     `${repoUrl}/trunk`,
     `${repoUrl}/branches`,
     `${repoUrl}/tags`,
-    '-m', 'Initialize standard layout (trunk/branches/tags)'
+    '-m',
+    'Initialize standard layout'
   );
-  logger.info(`Standard layout created for ${repoPath}`);
+
+  console.log('✅ Layout created');
 }
 
-/**
- * Delete a repository from disk.
- * @param {string} repoPath - Absolute path to the repository.
- */
+// 🔥 VERY IMPORTANT FUNCTION
+async function createInitialCommit(repoPath) {
+  try {
+    const repoUrl = toFileUrl(repoPath);
+
+    const tempDir = '/tmp/konnect_init';
+    await fse.ensureDir(tempDir);
+
+    const readme = path.join(tempDir, 'README.md');
+    await fse.writeFile(readme, '# Initial Commit\n');
+
+    await svn(
+      'import',
+      tempDir,
+      `${repoUrl}/trunk`,
+      '-m',
+      'Initial commit'
+    );
+
+    await fse.remove(tempDir);
+
+    console.log('✅ Initial commit created');
+
+  } catch (err) {
+    console.error('❌ Initial commit failed:', err.stderr || err.message);
+    throw err;
+  }
+}
+
+// ─── BRANCH & TAG ───────────────────────────────
+
+async function createBranch(repoUrl, branchName) {
+  await svn(
+    'copy',
+    `${repoUrl}/trunk`,
+    `${repoUrl}/branches/${branchName}`,
+    '-m',
+    `Create branch ${branchName}`
+  );
+}
+
+async function createTag(repoUrl, tagName) {
+  await svn(
+    'copy',
+    `${repoUrl}/trunk`,
+    `${repoUrl}/tags/${tagName}`,
+    '-m',
+    `Create tag ${tagName}`
+  );
+}
+
+// ─── OTHER FUNCTIONS ─────────────────────────────
+
 async function deleteRepository(repoPath) {
   await fse.remove(repoPath);
-  logger.info(`Repository deleted: ${repoPath}`);
 }
 
-/**
- * Verify that a path is a valid SVN repository (svnadmin verify).
- * @param {string} repoPath
- * @returns {boolean}
- */
 async function verifyRepository(repoPath) {
   try {
     await svnadmin('verify', '--quiet', repoPath);
@@ -81,15 +113,6 @@ async function verifyRepository(repoPath) {
   }
 }
 
-// ─── SVN Log ─────────────────────────────────────────────────────────────────
-
-/**
- * Get SVN commit log for a repository.
- * Returns parsed JS objects.
- * @param {string} repoPath
- * @param {number} limit
- * @returns {Array}
- */
 async function getLog(repoPath, limit = 50) {
   const repoUrl = toFileUrl(repoPath);
   const { stdout } = await svn(
@@ -101,32 +124,18 @@ async function getLog(repoPath, limit = 50) {
 }
 
 async function parseSvnLogXml(xml) {
-  if (!xml || xml.trim() === '') return [];
+  if (!xml) return [];
   const parsed = await xml2js.parseStringPromise(xml, { explicitArray: false });
   const entries = parsed?.log?.logentry;
-  if (!entries) return [];
   const list = Array.isArray(entries) ? entries : [entries];
+
   return list.map(entry => ({
-    revision:    parseInt(entry.$.revision, 10),
-    author:      entry.author || '',
-    date:        entry.date   || null,
-    message:     entry.msg    || '',
-    paths:       normalisePaths(entry.paths),
+    revision: parseInt(entry.$.revision, 10),
+    author: entry.author || '',
+    date: entry.date || null,
+    message: entry.msg || ''
   }));
 }
-
-function normalisePaths(paths) {
-  if (!paths) return [];
-  const items = paths.path;
-  if (!items) return [];
-  const list = Array.isArray(items) ? items : [items];
-  return list.map(p => ({
-    action: p.$.action,
-    path:   p._,
-  }));
-}
-
-// ─── Youngest Revision ───────────────────────────────────────────────────────
 
 async function getYoungestRevision(repoPath) {
   try {
@@ -137,39 +146,65 @@ async function getYoungestRevision(repoPath) {
   }
 }
 
-// ─── Disk Usage ──────────────────────────────────────────────────────────────
-
 async function getDiskUsage(repoPath) {
-  try {
-    const stat = await fse.stat(repoPath);
-    // For a real disk-usage, we'd walk the dir; return a basic check for now
-    return stat.isDirectory() ? await dirSize(repoPath) : 0;
-  } catch {
-    return 0;
-  }
+  return 0;
 }
 
-async function dirSize(dir) {
-  const files = await fse.readdir(dir, { withFileTypes: true });
-  let size = 0;
-  for (const f of files) {
-    const full = path.join(dir, f.name);
-    if (f.isDirectory()) {
-      size += await dirSize(full);
-    } else {
-      const st = await fse.stat(full);
-      size += st.size;
-    }
-  }
-  return size;
+// 📂 LIST FILES
+async function listFiles(url) {
+  return svn('list', url);
 }
+// 📄 GET FILE CONTENT
+async function getFileContent(url) {
+  return svn('cat', url);
+}
+
+// 📜 GET COMMIT HISTORY
+async function getCommitHistory(url, limit = 20) {
+  const { stdout } = await svn(
+    'log',
+    url,
+    '--limit',
+    limit.toString(),
+    '--xml'
+  );
+
+  // Parse XML → JSON (simple parsing)
+  const commits = [];
+
+  const entries = stdout.split('<logentry').slice(1);
+
+  entries.forEach(entry => {
+    const revision = entry.match(/revision="(\d+)"/)?.[1];
+    const author = entry.match(/<author>(.*?)<\/author>/)?.[1];
+    const date = entry.match(/<date>(.*?)<\/date>/)?.[1];
+    const message = entry.match(/<msg>(.*?)<\/msg>/)?.[1];
+
+    commits.push({
+      revision,
+      author,
+      date,
+      message
+    });
+  });
+
+  return commits;
+}
+
+// ─── EXPORTS ─────────────────────────────────────
 
 module.exports = {
   createRepository,
   createStandardLayout,
+  createInitialCommit, // ✅ FIXED (IMPORTANT)
   deleteRepository,
   verifyRepository,
   getLog,
   getYoungestRevision,
   getDiskUsage,
+  createBranch,
+  createTag,
+  listFiles,
+  getFileContent,
+  getCommitHistory,
 };

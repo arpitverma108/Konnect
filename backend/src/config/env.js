@@ -29,4 +29,7 @@ function validateEnv() {
   return value;
 }
 
-module.exports = { validateEnv };
+module.exports = { 
+  validateEnv,
+  baseUrl: 'http://localhost/svn'
+};
