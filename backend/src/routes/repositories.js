@@ -1,328 +1,296 @@
 'use strict';
 
-const apacheCfg   = require('../config/apache'); // ✅ FIXED (use apache.js)
-const express     = require('express');
-const Joi         = require('joi');
-const path        = require('path');
-const router      = express.Router();
+const express = require('express');
+const Joi = require('joi');
+const path = require('path');
 
-const db          = require('../config/database');
-const validate    = require('../middleware/validate');
-const wrap        = require('../middleware/asyncWrapper');
-const auth        = require('../middleware/auth');
+const router = express.Router();
 
-const svnSvc      = require('../services/svnService');
-const activitySvc = require('../services/activityService');
-const authzSvc    = require('../services/authzService');
+const apacheCfg = require('../config/apache');
+const db = require('../config/database');
 
-// ─── Validation schemas ─────────────────────────────
+const validate = require('../middleware/validate');
+const wrap = require('../middleware/asyncWrapper');
+const auth = require('../middleware/auth');
+const authorize = require('../middleware/authorize');
+
+const svnSvc = require('../services/svnService');
+const authzSvc = require('../services/authzService');
+
+// ─── VALIDATION ─────────────────────────────
 
 const createSchema = Joi.object({
-  name:        Joi.string().alphanum().min(1).max(64).required(),
+  name: Joi.string().pattern(/^[a-zA-Z0-9._-]+$/).min(1).max(64).required(),
   description: Joi.string().max(512).optional().allow('')
 });
 
-const updateSchema = Joi.object({
-  description: Joi.string().max(512).optional().allow(''),
-  is_active:   Joi.boolean().optional(),
-});
+// ─────────────────────────────────────────────
+// 🔥 GET ALL REPOS
+// ─────────────────────────────────────────────
 
-// ─── GET ALL REPOSITORIES ───────────────────────────
+router.get('/', auth, wrap(async (req, res) => {
 
-router.get('/', wrap(async (req, res) => {
-  const { rows } = await db.query(
-    `SELECT r.*,
-       (SELECT COUNT(*) FROM activity a WHERE a.repo_id = r.id) AS commit_count
-     FROM repositories r
-     ORDER BY r.name`
-  );
-  res.json(rows);
+  const page = Math.max(parseInt(req.query.page) || 1, 1);
+  const limit = Math.min(parseInt(req.query.limit) || 10, 50);
+  const search = req.query.search || "";
+  const offset = (page - 1) * limit;
+
+  let params = [search];
+  let where = `WHERE r.name ILIKE '%' || $1 || '%'`;
+
+  if (!['admin', 'super_admin'].includes(req.user.role)) {
+    where += `
+      AND r.id IN (
+        SELECT repo_id FROM permissions
+        WHERE 
+          (subject_type = 'user' AND subject_id = $2)
+          OR
+          (subject_type = 'group' AND subject_id IN (
+            SELECT group_id FROM group_members WHERE user_id = $2
+          ))
+      )
+    `;
+    params.push(req.user.id);
+  }
+
+  const { rows } = await db.query(`
+    SELECT r.*, COUNT(a.id) AS commit_count
+    FROM repositories r
+    LEFT JOIN activity a ON a.repo_id = r.id
+    ${where}
+    GROUP BY r.id
+    ORDER BY r.name
+    LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+  `, [...params, limit, offset]);
+
+  const data = await Promise.all(rows.map(async (r) => {
+    const size = await svnSvc.getDiskUsage(r.disk_path);
+    return { ...r, size };
+  }));
+
+  res.json({ page, limit, count: data.length, data });
 }));
 
-// ─── CREATE REPOSITORY (🔥 FULL FIX) ─────────────────
+// ─────────────────────────────────────────────
+// 🔥 GET SINGLE REPO
+// ─────────────────────────────────────────────
 
-router.post('/', auth, validate(createSchema), wrap(async (req, res) => {
-  const { name, description } = req.body;
-  const diskPath = path.join(apacheCfg.reposRoot, name);
+router.get('/:id', auth, wrap(async (req, res) => {
 
-  try {
-    // 1. Create repo
-    await svnSvc.createRepository(diskPath);
+  const { rows } = await db.query(
+    'SELECT * FROM repositories WHERE id=$1',
+    [req.params.id]
+  );
 
-    // 2. Create trunk/branches/tags
-    await svnSvc.createStandardLayout(diskPath);
+  if (!rows.length) return res.status(404).json({ error: "Not found" });
 
-    // 3. 🔥 VERY IMPORTANT: initial commit
-    await svnSvc.createInitialCommit(diskPath);
+  res.json(rows[0]);
+}));
 
-    // 4. Save in DB
-    const { rows } = await db.query(
-      `INSERT INTO repositories (name, description, disk_path)
-       VALUES ($1, $2, $3)
-       RETURNING *`,
-      [name, description || null, diskPath]
+// ─────────────────────────────────────────────
+// 🌳 TREE API
+// ─────────────────────────────────────────────
+
+router.get('/:id/tree', auth, wrap(async (req, res) => {
+
+  const { rows } = await db.query(
+    'SELECT * FROM repositories WHERE id=$1',
+    [req.params.id]
+  );
+
+  if (!rows.length) return res.status(404).json({ error: "Not found" });
+
+  const tree = await svnSvc.listFiles(rows[0].disk_path);
+
+  res.json({ repo: rows[0].name, tree });
+}));
+
+// ─────────────────────────────────────────────
+// 📄 FILE CONTENT
+// ─────────────────────────────────────────────
+
+router.get('/:id/file-content', auth, wrap(async (req, res) => {
+
+  const filePath = req.query.path;
+  if (!filePath) return res.status(400).json({ error: "File path required" });
+
+  const { rows } = await db.query(
+    'SELECT * FROM repositories WHERE id=$1',
+    [req.params.id]
+  );
+
+  if (!rows.length) return res.status(404).json({ error: "Not found" });
+
+  const content = await svnSvc.getFileContent(rows[0].disk_path, filePath);
+
+  res.json({ repo: rows[0].name, path: filePath, content });
+}));
+
+// ─────────────────────────────────────────────
+// 🔥 CREATE REPO
+// ─────────────────────────────────────────────
+
+router.post(
+  '/',
+  auth,
+  authorize("admin", "super_admin"),
+  validate(createSchema),
+  wrap(async (req, res) => {
+
+    const { name, description } = req.body;
+    const diskPath = path.join(apacheCfg.reposRoot, name);
+
+    const existing = await db.query(
+      "SELECT id FROM repositories WHERE name=$1",
+      [name]
     );
 
-    // 5. Permissions rebuild
-    await authzSvc.rebuildAuthzFile(db);
+    if (existing.rows.length) {
+      return res.status(400).json({ error: "Already exists" });
+    }
 
-    res.status(201).json(rows[0]);
+    try {
+      await svnSvc.createFullRepository(diskPath);
 
-  } catch (error) {
-    console.error("Repo creation error:", error);
+      const { rows } = await db.query(`
+        INSERT INTO repositories (name, description, disk_path)
+        VALUES ($1,$2,$3) RETURNING *
+      `, [name, description || null, diskPath]);
 
-    await svnSvc.deleteRepository(diskPath).catch(() => {});
+      const repo = rows[0];
 
-    res.status(500).json({
-      error: 'Failed to create repository',
-      details: error.message
-    });
+      await db.query(`
+        INSERT INTO permissions (repo_id,path,subject_type,subject_id,permission)
+        VALUES ($1,'/','user',$2,'rw')
+      `, [repo.id, req.user.id]);
+
+      await authzSvc.rebuildAuthzFile(db);
+
+      res.status(201).json({ message: "Created", data: repo });
+
+    } catch (err) {
+      res.status(500).json({ error: "Create failed", details: err.message });
+    }
+  })
+);
+
+// ─────────────────────────────────────────────
+// 🔥 COMMIT HISTORY (CURSOR PAGINATION)
+// ─────────────────────────────────────────────
+
+router.get('/:id/commits', auth, wrap(async (req, res) => {
+
+  const repoId = req.params.id;
+
+  const { rows } = await db.query(
+    'SELECT id, name, disk_path FROM repositories WHERE id=$1',
+    [repoId]
+  );
+
+  if (!rows.length) return res.status(404).json({ error: "Not found" });
+
+  const repo = rows[0];
+
+  const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+  const cursor = req.query.cursor;
+
+  let beforeDate = null;
+  let beforeRev = null;
+
+  if (cursor) {
+    const [d, r] = cursor.split('|');
+    beforeDate = d;
+    beforeRev = r ? parseInt(r) : null;
   }
+
+  const all = await svnSvc.getCommitHistory(repo.disk_path, limit + 10);
+
+  let filtered = all;
+
+  if (beforeDate) {
+    filtered = all.filter(c =>
+      (c.date < beforeDate) ||
+      (c.date === beforeDate && c.revision < beforeRev)
+    );
+  }
+
+  const pageItems = filtered.slice(0, limit);
+
+  const nextCursor = pageItems.length
+    ? `${pageItems[pageItems.length - 1].date}|${pageItems[pageItems.length - 1].revision}`
+    : null;
+
+  res.json({
+    repo: repo.name,
+    count: pageItems.length,
+    nextCursor,
+    commits: pageItems
+  });
 }));
 
-// ─── GET SINGLE REPO ────────────────────────────────
+// ─────────────────────────────────────────────
+// 🌿 BRANCHES
+// ─────────────────────────────────────────────
 
-router.get('/:id(\\d+)', wrap(async (req, res) => {
+router.get('/:id/branches', auth, wrap(async (req, res) => {
+
   const { rows } = await db.query(
-    `SELECT r.*,
-       (SELECT COUNT(*) FROM activity a WHERE a.repo_id = r.id) AS commit_count
-     FROM repositories r
-     WHERE r.id = $1`,
+    'SELECT * FROM repositories WHERE id=$1',
     [req.params.id]
   );
 
-  if (!rows[0]) return res.status(404).json({ error: 'Repository not found' });
+  if (!rows.length) return res.status(404).json({ error: "Not found" });
 
-  const repo = rows[0];
-  repo.svn_url = `${apacheCfg.baseUrl}/${repo.name}`;
-  repo.youngest_revision =
-    await svnSvc.getYoungestRevision(repo.disk_path).catch(() => 0);
+  const files = await svnSvc.listFiles(rows[0].disk_path);
 
-  res.json(repo);
+  const branches = files
+    .filter(f => f.startsWith('branches/'))
+    .map(f => f.replace('branches/', '').replace(/\/$/, ''));
+
+  res.json({ branches });
 }));
 
-// ─── DELETE REPO ───────────────────────────────────
+// ─────────────────────────────────────────────
+// 🏷 TAGS
+// ─────────────────────────────────────────────
 
-router.delete('/:id(\\d+)', auth, wrap(async (req, res) => {
+router.get('/:id/tags', auth, wrap(async (req, res) => {
+
   const { rows } = await db.query(
-    'SELECT * FROM repositories WHERE id = $1',
+    'SELECT * FROM repositories WHERE id=$1',
     [req.params.id]
   );
 
-  if (!rows[0]) return res.status(404).json({ error: 'Repository not found' });
+  if (!rows.length) return res.status(404).json({ error: "Not found" });
 
-  const repo = rows[0];
+  const files = await svnSvc.listFiles(rows[0].disk_path);
 
-  await svnSvc.deleteRepository(repo.disk_path);
-  await db.query('DELETE FROM repositories WHERE id = $1', [req.params.id]);
+  const tags = files
+    .filter(f => f.startsWith('tags/'))
+    .map(f => f.replace('tags/', '').replace(/\/$/, ''));
+
+  res.json({ tags });
+}));
+
+// ─────────────────────────────────────────────
+// 🔥 DELETE REPO
+// ─────────────────────────────────────────────
+
+router.delete('/:id', auth, authorize("super_admin"), wrap(async (req, res) => {
+
+  const { rows } = await db.query(
+    'SELECT * FROM repositories WHERE id=$1',
+    [req.params.id]
+  );
+
+  if (!rows.length) return res.status(404).json({ error: "Not found" });
+
+  await svnSvc.deleteRepository(rows[0].disk_path);
+  await db.query('DELETE FROM repositories WHERE id=$1', [rows[0].id]);
+
   await authzSvc.rebuildAuthzFile(db);
 
-  res.json({ message: `Repository '${repo.name}' deleted` });
+  res.json({ message: "Deleted" });
 }));
 
-// ─── CREATE BRANCH ─────────────────────────────────
-
-router.post('/:id/branch', auth, wrap(async (req, res) => {
-  const { name } = req.body;
-
-  const { rows } = await db.query(
-    'SELECT * FROM repositories WHERE id = $1',
-    [req.params.id]
-  );
-
-  const repo = rows[0];
-  const repoUrl = `${apacheCfg.baseUrl}/${repo.name}`;
-
-  await svnSvc.createBranch(repoUrl, name);
-
-  res.json({ message: `Branch '${name}' created` });
-}));
-
-// ─── CREATE TAG ────────────────────────────────────
-
-router.post('/:id/tag', auth, wrap(async (req, res) => {
-  const { name } = req.body;
-
-  const { rows } = await db.query(
-    'SELECT * FROM repositories WHERE id = $1',
-    [req.params.id]
-  );
-
-  const repo = rows[0];
-  const repoUrl = `${apacheCfg.baseUrl}/${repo.name}`;
-
-  await svnSvc.createTag(repoUrl, name);
-
-  res.json({ message: `Tag '${name}' created` });
-}));
-// 📂 FILE BROWSER
-router.get('/:id/files', wrap(async (req, res) => {
-  const { path: filePath = '' } = req.query;
-
-  // 1. Get repo
-  const { rows } = await db.query(
-    'SELECT * FROM repositories WHERE id = $1',
-    [req.params.id]
-  );
-
-  if (!rows[0]) {
-    return res.status(404).json({ error: 'Repository not found' });
-  }
-
-  const repo = rows[0];
-
-  // 2. Build SVN URL
-  const baseUrl = `${apacheCfg.baseUrl}/${repo.name}`;
-  const targetPath = filePath ? `${baseUrl}/${filePath}` : baseUrl;
-
-  try {
-    // 3. Run svn list
-    const { stdout } = await svnSvc.listFiles(targetPath);
-
-    // 4. Parse output
-    const files = stdout
-      .split('\n')
-      .filter(Boolean)
-      .map(item => ({
-        name: item.replace('/', ''),
-        type: item.endsWith('/') ? 'dir' : 'file'
-      }));
-
-    res.json(files);
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to list files' });
-  }
-}));
-// 📄 FILE CONTENT API
-router.get('/:id/file-content', wrap(async (req, res) => {
-  const { path: filePath } = req.query;
-
-  if (!filePath) {
-    return res.status(400).json({ error: 'File path is required' });
-  }
-
-  const { rows } = await db.query(
-    'SELECT * FROM repositories WHERE id = $1',
-    [req.params.id]
-  );
-
-  if (!rows[0]) {
-    return res.status(404).json({ error: 'Repository not found' });
-  }
-
-  const repo = rows[0];
-
-  const fileUrl = `${apacheCfg.baseUrl}/${repo.name}/${filePath}`;
-
-  const { stdout } = await svnSvc.getFileContent(fileUrl);
-
-  res.json({ content: stdout });
-}));
-
-// 📜 COMMIT HISTORY API
-// 📜 COMMIT HISTORY API
-router.get('/:id/commits', wrap(async (req, res) => {
-  const limit = parseInt(req.query.limit || '20');
-
-  // 1. Get repo
-  const { rows } = await db.query(
-    'SELECT * FROM repositories WHERE id = $1',
-    [req.params.id]
-  );
-
-  if (!rows[0]) {
-    return res.status(404).json({ error: 'Repository not found' });
-  }
-
-  const repo = rows[0];
-
-  const repoUrl = `${apacheCfg.baseUrl}/${repo.name}`;
-
-  console.log("📜 Fetching commits from:", repoUrl);
-
-  try {
-    const commits = await svnSvc.getCommitHistory(repoUrl, limit);
-
-    res.json({
-      total: commits.length,
-      commits
-    });
-
-  } catch (err) {
-    console.error("❌ Commit error:", err);
-    res.status(500).json({ error: 'Failed to fetch commits' });
-  }
-}));
-// 🌿 LIST BRANCHES
-router.get('/:id/branches', wrap(async (req, res) => {
-  // 1. Get repo
-  const { rows } = await db.query(
-    'SELECT * FROM repositories WHERE id = $1',
-    [req.params.id]
-  );
-
-  if (!rows[0]) {
-    return res.status(404).json({ error: 'Repository not found' });
-  }
-
-  const repo = rows[0];
-
-  // 2. Build URL
-  const url = `${apacheCfg.baseUrl}/${repo.name}/branches`;
-
-  console.log("🌿 Fetching branches from:", url);
-
-  try {
-    const { stdout } = await svnSvc.listFiles(url);
-
-    const branches = stdout
-      .split('\n')
-      .filter(Boolean)
-      .map(b => b.replace('/', ''));
-
-    res.json(branches);
-
-  } catch (err) {
-    console.error("❌ Branch error:", err);
-    res.json([]); // return empty instead of crash
-  }
-}));
-// 🏷️ LIST TAGS
-router.get('/:id/tags', wrap(async (req, res) => {
-  // 1. Get repo
-  const { rows } = await db.query(
-    'SELECT * FROM repositories WHERE id = $1',
-    [req.params.id]
-  );
-
-  if (!rows[0]) {
-    return res.status(404).json({ error: 'Repository not found' });
-  }
-
-  const repo = rows[0];
-
-  // 2. Build URL
-  const url = `${apacheCfg.baseUrl}/${repo.name}/tags`;
-
-  console.log("🏷️ Fetching tags from:", url);
-
-  try {
-    const { stdout } = await svnSvc.listFiles(url);
-
-    const tags = stdout
-      .split('\n')
-      .filter(Boolean)
-      .map(t => t.replace('/', ''));
-
-    res.json(tags);
-
-  } catch (err) {
-    console.error("❌ Tag error:", err);
-    res.json([]);
-  }
-}));
-
-// ✅ MUST BE LAST
 module.exports = router;

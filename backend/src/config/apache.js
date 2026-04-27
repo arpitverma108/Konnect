@@ -14,7 +14,7 @@ function requiredEnv(name, defaultValue = '') {
 module.exports = {
 
   // 🔥 ADD THIS (MOST IMPORTANT FIX)
-  baseUrl: requiredEnv('SVN_BASE_URL', 'http://localhost/svn'),
+  baseUrl: requiredEnv('SVN_BASE_URL'),
 
   // ─── PATHS ─────────────────────────────
   reposRoot: requiredEnv('SVN_REPOS_ROOT', '/svn/repos'),

@@ -1,16 +1,20 @@
 'use strict';
 require('dotenv').config();
 
+const env = require('./config/env'); // validates env once
 const authRoutes = require('./routes/auth');
 const express       = require('express');
 const cors          = require('cors');
 const morgan        = require('morgan');
 const helmet        = require('helmet');
 const rateLimit     = require('express-rate-limit');
+const settingsRoutes = require('./routes/settings');
+const auditLogsRoutes = require('./routes/auditLogs');
 
 const errorHandler  = require('./middleware/errorHandler');
 
 // Route imports
+const syncRoutes = require('./routes/sync');
 const repoRoutes        = require('./routes/repositories');
 const userRoutes        = require('./routes/users');
 const groupRoutes       = require('./routes/groups');
@@ -23,14 +27,18 @@ const app = express();
 
 // ─── Security ─────────────────────────────────────────────────────────────
 app.use(helmet());
-app.use(cors({ origin: process.env.CORS_ORIGIN || 'http://localhost:5173' }));
+app.use(cors({ origin: env.CORS_ORIGIN }));
 
+app.use('/api/audit-logs', auditLogsRoutes);
+
+app.use('/api/settings', settingsRoutes);
 // ─── Logging (FIXED) ──────────────────────────────────────────────────────
 app.use(morgan('combined')); // simple console logging
 
 // ─── Body Parsing ─────────────────────────────────────────────────────────
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
+
 
 // ─── Rate Limiting ────────────────────────────────────────────────────────
 const limiter = rateLimit({
@@ -55,6 +63,7 @@ app.use('/api/hooks',        hookRoutes);
 app.use('/api/activity',     activityRoutes);
 app.use('/api/dashboard',    dashboardRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/sync', syncRoutes);
 
 // ─── 404 ──────────────────────────────────────────────────────────────────
 app.use((_req, res) => {

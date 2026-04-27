@@ -7,9 +7,11 @@ const router      = express.Router();
 const db          = require('../config/database');
 const wrap        = require('../middleware/asyncWrapper');
 const activitySvc = require('../services/activityService');
+const auth        = require('../middleware/auth');
+const checkPermission = require('../middleware/checkPermission');
 
 // GET /api/dashboard/stats
-router.get('/stats', wrap(async (req, res) => {
+router.get('/stats', auth, wrap(async (req, res) => {
   const [repoCount, userCount, groupCount, commitsToday] = await Promise.all([
     db.query('SELECT COUNT(*) FROM repositories WHERE is_active = true'),
     db.query('SELECT COUNT(*) FROM users WHERE is_active = true'),
@@ -26,14 +28,14 @@ router.get('/stats', wrap(async (req, res) => {
 }));
 
 // GET /api/dashboard/recent-commits?limit=20
-router.get('/recent-commits', wrap(async (req, res) => {
+router.get('/recent-commits', auth, wrap(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit || '20', 10), 100);
   const rows  = await activitySvc.getGlobalActivity(db, { limit, offset: 0 });
   res.json(rows);
 }));
 
 // GET /api/dashboard/commits-chart?days=7
-router.get('/commits-chart', wrap(async (req, res) => {
+router.get('/commits-chart', auth, wrap(async (req, res) => {
   const days = Math.min(parseInt(req.query.days || '7', 10), 90);
   const rows = await activitySvc.getCommitsPerDay(db, days);
   res.json(rows);

@@ -1,25 +1,40 @@
-const jwt = require('jsonwebtoken');
+'use strict';
 
-const SECRET = "mysecret123";
+const jwt = require('jsonwebtoken');
+const env = require('../config/env');
 
 module.exports = (req, res, next) => {
   const authHeader = req.headers.authorization;
 
-  if (!authHeader) {
-    return res.status(401).json({ error: "No token provided" });
+  // 1️⃣ Check header exists + correct format
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({
+      error: "Unauthorized"
+    });
   }
 
+  // 2️⃣ Extract token
   const token = authHeader.split(' ')[1];
 
-  if (!token) {
-    return res.status(401).json({ error: "Invalid token format" });
-  }
-
   try {
-    const decoded = jwt.verify(token, SECRET);
+    // 3️⃣ Verify token
+    const decoded = jwt.verify(token, env.JWT_SECRET);
+
+    // 4️⃣ Attach user
     req.user = decoded;
+
     next();
+
   } catch (err) {
-    return res.status(401).json({ error: "Invalid or expired token" });
+
+    if (err.name === 'TokenExpiredError') {
+      return res.status(401).json({
+        error: "Token expired"
+      });
+    }
+
+    return res.status(401).json({
+      error: "Invalid token"
+    });
   }
 };

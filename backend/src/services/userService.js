@@ -3,18 +3,18 @@
 const fs = require('fs').promises;
 const bcrypt = require('bcrypt');
 const apacheMD5 = require('apache-md5');
+
 const apacheCfg = require('../config/apache');
 const authzService = require('./authzService');
 const logger = require('../config/logger');
 
 const BCRYPT_ROUNDS = parseInt(process.env.BCRYPT_ROUNDS || '12', 10);
 
+
 // ───────────── READ HTPASSWD ─────────────
 
 async function readHtpasswd() {
   const filePath = apacheCfg.htpasswdPath;
-
-  console.log("READ PATH:", filePath);
 
   try {
     const content = await fs.readFile(filePath, 'utf8');
@@ -31,34 +31,34 @@ async function readHtpasswd() {
     }
 
     return map;
+
   } catch (err) {
     if (err.code === 'ENOENT') return {};
     throw err;
   }
 }
 
+
 // ───────────── WRITE HTPASSWD ─────────────
 
 async function writeHtpasswd(map) {
   const filePath = apacheCfg.htpasswdPath;
-
-  console.log("WRITE PATH:", filePath);
 
   let content = '';
   for (const user in map) {
     content += `${user}:${map[user]}\n`;
   }
 
-  console.log("WRITE CONTENT:\n", content);
-
   await fs.writeFile(filePath, content, 'utf8');
-  console.log("WRITE DONE ✅");
+
+  // ✅ SAFE LOG
+  logger.debug("htpasswd file updated successfully");
 }
+
 
 // ───────────── CREATE USER ─────────────
 
 async function createUser(db, { username, password, email, fullName }) {
-  console.log("STEP 1: Creating user:", username);
 
   if (!username || !password) {
     const err = new Error('Username and password required');
@@ -72,8 +72,6 @@ async function createUser(db, { username, password, email, fullName }) {
   // 2. Read htpasswd
   const map = await readHtpasswd();
 
-  console.log("STEP 2: Map BEFORE:", map);
-
   if (map[username]) {
     const err = new Error(`User '${username}' already exists`);
     err.statusCode = 409;
@@ -83,12 +81,8 @@ async function createUser(db, { username, password, email, fullName }) {
   // 3. Add Apache user
   map[username] = apacheMD5(password);
 
-  console.log("STEP 3: Map AFTER:", map);
-
   // 4. Write file
   await writeHtpasswd(map);
-
-  console.log("STEP 4: writeHtpasswd executed");
 
   // 5. Insert DB
   let user;
@@ -101,6 +95,7 @@ async function createUser(db, { username, password, email, fullName }) {
     );
 
     user = result.rows[0];
+
   } catch (err) {
     // rollback file if DB fails
     const map2 = await readHtpasswd();
@@ -112,6 +107,7 @@ async function createUser(db, { username, password, email, fullName }) {
   logger.info(`User created: ${username}`);
   return user;
 }
+
 
 // ───────────── OTHER FUNCTIONS ─────────────
 
