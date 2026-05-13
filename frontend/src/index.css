@@ -1,0 +1,115 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --primary-color: #1E6FD9;
+
+  --bg-color: #0d1117;
+  --bg-surface: #161b22;
+
+  --text-main: #e6edf3;
+  --text-secondary: #9da7b3;
+  --text-muted: #7d8590;
+
+  --border-color: #30363d;
+
+  --shadow-light: 0 6px 18px rgba(0,0,0,0.6);
+
+  --font-family: 'Inter', sans-serif;
+}
+
+/* ✅ CRITICAL FIX */
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--bg-color) !important;
+  font-family: var(--font-family);
+  color: var(--text-main);
+}
+
+/* Ensure layout behaves correctly */
+.ant-layout {
+  min-height: 100vh;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* Typography */
+h1, h2, h3, h4, h5, h6 {
+  color: var(--text-main);
+  font-weight: 600;
+}
+
+p {
+  color: var(--text-muted);
+}
+
+.ant-typography {
+  color: var(--text-main);
+}
+
+.ant-typography-secondary {
+  color: var(--text-muted);
+}
+
+/* Table */
+.ant-table {
+  background: var(--bg-surface) !important;
+  color: var(--text-main) !important;
+}
+
+.ant-table-thead > tr > th {
+  background: var(--bg-surface) !important;
+  color: var(--text-secondary) !important;
+  border-bottom: 1px solid var(--border-color) !important;
+}
+
+.ant-table-tbody > tr > td {
+  color: var(--text-main) !important;
+  border-bottom: 1px solid var(--border-color) !important;
+}
+
+.ant-table-tbody > tr:hover > td {
+  background: #21262d !important;
+}
+
+/* Input */
+.ant-input {
+  background: var(--bg-color) !important;
+  border-color: var(--border-color) !important;
+  color: var(--text-main) !important;
+}
+
+/* Panels */
+.glass-panel {
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+}
+
+/* Dropdown */
+.ant-dropdown-menu {
+  background: var(--bg-surface) !important;
+}
+
+.ant-dropdown-menu-item {
+  color: var(--text-main) !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+
+/* Selection */
+::selection {
+  background: #1f6feb;
+  color: #ffffff;
+}
