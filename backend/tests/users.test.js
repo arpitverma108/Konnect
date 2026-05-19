@@ -38,8 +38,24 @@ jest.mock('../src/config/apache', () => ({
   hookFileName: (name) => name,
 }));
 
+jest.mock('../src/services/activityLogger', () => ({
+  logActivity: jest.fn().mockResolvedValue(undefined),
+  formatActivityForResponse: jest.fn((row) => row),
+  getFormattedGlobalActivity: jest.fn(),
+  getFormattedRepoActivity: jest.fn(),
+  getFilteredActivity: jest.fn(),
+  ACTIVITY_TYPES: {
+    COMMIT: 'commit',
+    USER_CREATE: 'user_create',
+    USER_DELETE: 'user_delete',
+    USER_ROLE_CHANGE: 'user_role_change',
+    USER_PASSWORD_CHANGE: 'user_password_change',
+  },
+}));
+
 const app = require('../src/app');
 const db  = require('../src/config/database');
+const { logActivity, ACTIVITY_TYPES } = require('../src/services/activityLogger');
 
 const JWT_SECRET = 'test-secret-32-characters-long!!';
 
@@ -155,6 +171,22 @@ describe('POST /api/users', () => {
 
     expect(res.status).toBe(201);
     expect(res.body.role).toBe('viewer');
+    
+    // Verify user creation was logged
+    expect(logActivity).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({
+        event_type: ACTIVITY_TYPES.USER_CREATE,
+        user_id: 1, // admin user from token
+        action: expect.stringContaining('newbie'),
+        entity: 'user',
+        entity_id: 5,
+        metadata: expect.objectContaining({
+          username: 'newbie',
+          role: 'viewer',
+        }),
+      })
+    );
   });
 });
 
@@ -244,5 +276,65 @@ describe('DELETE /api/users/:id', () => {
       .set('Authorization', `Bearer ${token}`);
 
     expect(res.status).toBe(404);
+  });
+});
+
+// ─── Integration: USER_CREATE events in activity feed ──────────────────────
+
+describe('User creation events in activity feed', () => {
+  it('should log user_create event with proper fields', async () => {
+    const token = makeToken({ role: 'admin' });
+    setupAuthMock('admin');
+
+    db.query
+      .mockResolvedValueOnce({ rows: [] })              // no existing user
+      .mockResolvedValueOnce({ rows: [{ id: 10, username: 'testuser', role: 'admin' }] }); // insert result
+
+    const res = await request(app)
+      .post('/api/users')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ username: 'testuser', password: 'securepass123', role: 'admin' });
+
+    expect(res.status).toBe(201);
+
+    // Verify logActivity was called with USER_CREATE event
+    expect(logActivity).toHaveBeenCalled();
+    const call = logActivity.mock.calls[logActivity.mock.calls.length - 1];
+    const activityData = call[1];
+
+    expect(activityData.event_type).toBe(ACTIVITY_TYPES.USER_CREATE);
+    expect(activityData.action).toContain('testuser');
+    expect(activityData.entity).toBe('user');
+    expect(activityData.entity_id).toBe(10);
+    expect(activityData.metadata.username).toBe('testuser');
+    expect(activityData.metadata.role).toBe('admin');
+  });
+
+  it('should include email in activity metadata when provided', async () => {
+    const token = makeToken({ role: 'super_admin' });
+    setupAuthMock('super_admin');
+
+    db.query
+      .mockResolvedValueOnce({ rows: [] })              // no existing user
+      .mockResolvedValueOnce({ rows: [{ id: 15, username: 'emailuser', role: 'viewer' }] }); // insert result
+
+    const res = await request(app)
+      .post('/api/users')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ 
+        username: 'emailuser', 
+        password: 'securepass123',
+        email: 'test@example.com',
+        fullName: 'Test User'
+      });
+
+    expect(res.status).toBe(201);
+
+    // Verify activity includes email metadata
+    expect(logActivity).toHaveBeenCalled();
+    const call = logActivity.mock.calls[logActivity.mock.calls.length - 1];
+    const activityData = call[1];
+
+    expect(activityData.metadata.email).toBe('test@example.com');
   });
 });

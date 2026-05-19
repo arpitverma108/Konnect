@@ -4,9 +4,11 @@
 function errorHandler(err, req, res, next) {
   // Joi validation errors
   if (err.isJoi || err.name === 'ValidationError') {
+    const details = err.details?.map(d => d.message) || [err.message];
+
     return res.status(400).json({
-      error: 'Validation error',
-      details: err.details?.map(d => d.message) || [err.message],
+      error: details[0] || 'Validation error',
+      details,
     });
   }
 

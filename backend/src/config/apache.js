@@ -26,12 +26,19 @@ module.exports = {
 
   authzPath: requiredEnv(
     'AUTHZ_PATH',
-    '/etc/apache2/dav_svn.authz'
+    '/var/lib/konnect/svn-authz/dav_svn.authz'
   ),
 
   reloadCmd: requiredEnv(
     'APACHE_RELOAD_CMD',
-    'sudo service apache2 reload'
+    'sudo /usr/local/sbin/konnect-apache-reload'
+  ),
+
+  svnauthz: requiredEnv('SVNAUTHZ_PATH', 'svnauthz'),
+
+  authzLockDir: requiredEnv(
+    'AUTHZ_LOCK_DIR',
+    '/var/lock/konnect-authz.lock'
   ),
 
   // ─── SVN BINARIES ─────────────────────

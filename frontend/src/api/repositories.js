@@ -1,13 +1,16 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import apiClient from './index'
+import {queryKeys} from '../lib/queryKeys'
+import {staleTimes} from '../lib/queryConfig'
 
 const KEYS = {
-  all: (params) => ['repositories', params],
-  detail: (id) => ['repositories', id],
-  activity: (repoId, params) => ['repositories', repoId, 'activity', params],
-  files: (repoId) => ['repo-tree', repoId],
-  fileContent: (repoId, path) => ['file-content', repoId, path],
+  all: queryKeys.repositories.all,
+  list: queryKeys.repositories.list,
+  detail: queryKeys.repositories.detail,
+  activity: queryKeys.repositories.activity,
+  files: queryKeys.repositories.files,
+  fileContent: queryKeys.repositories.fileContent,
 }
 
 const normalizeList = (res) => {
@@ -74,10 +77,10 @@ export const syncAllActivity = () =>
 
 export const useRepositories = (params = {}, options = {}) =>
   useQuery({
-    queryKey: KEYS.all(params),
+    queryKey: KEYS.list(params),
     queryFn: () => getRepositories(params),
     enabled: options.enabled ?? true,
-    staleTime: 60 * 1000,
+    staleTime: staleTimes.standard,
     select: (res) => normalizePaginated(res),
   })
 
@@ -95,7 +98,7 @@ export const useCreateRepository = () => {
     mutationFn: createRepository,
     onSuccess: () =>
       qc.invalidateQueries({
-        queryKey: ['repositories'],
+        queryKey: KEYS.all,
         exact: false,
       }),
   })
@@ -108,7 +111,7 @@ export const useDeleteRepository = () => {
     mutationFn: deleteRepository,
     onSuccess: () =>
       qc.invalidateQueries({
-        queryKey: ['repositories'],
+        queryKey: KEYS.all,
         exact: false,
       }),
   })
@@ -210,12 +213,12 @@ export const useSyncActivity = () => {
 
     onSuccess: () => {
       qc.invalidateQueries({
-        queryKey: ['repositories'],
+        queryKey: queryKeys.repositories.all,
         exact: false,
       })
 
       qc.invalidateQueries({
-        queryKey: ['activity'],
+        queryKey: queryKeys.activity.all,
       })
     },
   })
@@ -223,7 +226,7 @@ export const useSyncActivity = () => {
 
 export const useBranches = (repoId) =>
   useQuery({
-    queryKey: ['branches', repoId],
+    queryKey: queryKeys.repositories.branches(repoId),
 
     queryFn: () =>
       apiClient.get(
@@ -232,7 +235,7 @@ export const useBranches = (repoId) =>
 
     enabled: !!repoId,
 
-    staleTime: 60 * 1000,
+    staleTime: staleTimes.standard,
 
     select: (res) =>
       res?.branches ||
@@ -254,7 +257,7 @@ export const useCreateBranch = (
 
     onSuccess: () => {
       qc.invalidateQueries({
-        queryKey: ['branches', repoId],
+        queryKey: queryKeys.repositories.branches(repoId),
       })
     },
   })
@@ -273,7 +276,7 @@ export const useDeleteBranch = (
 
     onSuccess: () => {
       qc.invalidateQueries({
-        queryKey: ['branches', repoId],
+        queryKey: queryKeys.repositories.branches(repoId),
       })
     },
   })
@@ -281,7 +284,7 @@ export const useDeleteBranch = (
 
 export const useTags = (repoId) =>
   useQuery({
-    queryKey: ['tags', repoId],
+    queryKey: queryKeys.repositories.tags(repoId),
 
     queryFn: () =>
       apiClient.get(
@@ -290,7 +293,7 @@ export const useTags = (repoId) =>
 
     enabled: !!repoId,
 
-    staleTime: 60 * 1000,
+    staleTime: staleTimes.standard,
 
     select: (res) =>
       res?.tags ||
@@ -312,7 +315,7 @@ export const useCreateTag = (
 
     onSuccess: () => {
       qc.invalidateQueries({
-        queryKey: ['tags', repoId],
+        queryKey: queryKeys.repositories.tags(repoId),
       })
     },
   })
@@ -331,7 +334,7 @@ export const useDeleteTag = (
 
     onSuccess: () => {
       qc.invalidateQueries({
-        queryKey: ['tags', repoId],
+        queryKey: queryKeys.repositories.tags(repoId),
       })
     },
   })
@@ -342,11 +345,11 @@ export const useRepoCommits = (
   params = {}
 ) =>
   useQuery({
-    queryKey: [
-      'repo-commits',
-      repoId,
-      params,
-    ],
+    queryKey:
+      queryKeys.repositories.commits(
+        repoId,
+        params
+      ),
 
     queryFn: () =>
       apiClient.get(
@@ -356,7 +359,7 @@ export const useRepoCommits = (
 
     enabled: !!repoId,
 
-    staleTime: 30 * 1000,
+    staleTime: staleTimes.short,
 
     select: (res) => {
       const raw =

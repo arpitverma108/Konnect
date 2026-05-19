@@ -31,7 +31,9 @@ const schema = Joi.object({
   // 🌐 APACHE CONFIG
   HTPASSWD_PATH: Joi.string().required(),
   AUTHZ_PATH: Joi.string().required(),
-  APACHE_RELOAD_CMD: Joi.string().default('httpd -k graceful'),
+  APACHE_RELOAD_CMD: Joi.string().default('sudo /usr/local/sbin/konnect-apache-reload'),
+  SVNAUTHZ_PATH: Joi.string().default('svnauthz'),
+  AUTHZ_LOCK_DIR: Joi.string().default('/var/lock/konnect-authz.lock'),
 
   // ⚙️ SVN BINARIES
   SVNADMIN_PATH: Joi.string().default('svnadmin'),

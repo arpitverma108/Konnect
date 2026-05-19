@@ -28,8 +28,8 @@ const ProtectedRoute=({
 })=>{
 
   const token=
-    localStorage.getItem(
-      'token'
+    useAppStore(
+      (state)=>state.token
     )
 
   const {

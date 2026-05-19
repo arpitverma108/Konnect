@@ -22,26 +22,23 @@ const { Text } = Typography
 
 const UserList = ({
   users = [],
+  currentUser = null,
   loading = false,
   searchTerm = '',
   page = 1,
   pageSize = 10,
   total = 0,
   onPageChange,
+  rowSelection,
 }) => {
   const navigate = useNavigate()
 
   const { mutate: deleteUser } = useDeleteUser()
   const [deletingId, setDeletingId] = useState(null)
 
-const user =
-  JSON.parse(
-    localStorage.getItem('user')
-  )
-
 const {
   isSuperAdmin: canDelete,
-} = useRole(user)
+} = useRole(currentUser)
 
   const handleDelete = (id) => {
     setDeletingId(id)
@@ -185,6 +182,7 @@ const {
       dataSource={users}
       rowKey="id"
       loading={loading}
+      rowSelection={rowSelection}
       locale={{
         emptyText: (
           <Empty

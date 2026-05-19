@@ -1,8 +1,18 @@
-import {useQuery} from '@tanstack/react-query'
+import {
+  keepPreviousData,
+  useQuery,
+} from '@tanstack/react-query'
+
 import apiClient from './index'
+import {normalizePaginated} from '../utils/normalize'
+import {cleanQueryParams} from '../utils/queryParams'
+import {queryKeys} from '../lib/queryKeys'
 
 export const getAuditLogs=(params={})=>
-  apiClient.get('/audit-logs',{params})
+  apiClient.get('/audit-logs',{
+    params:
+      cleanQueryParams(params),
+  })
 
 export const useAuditLogs=(
   params={},
@@ -10,8 +20,9 @@ export const useAuditLogs=(
 )=>
   useQuery({
     queryKey:[
-      'audit-logs',
-      params,
+      ...queryKeys.auditLogs.list(
+        cleanQueryParams(params)
+      ),
     ],
 
     queryFn:()=>
@@ -20,30 +31,20 @@ export const useAuditLogs=(
     enabled:
       options.enabled ?? true,
 
-    select:(raw)=>({
+    placeholderData:
+      options.placeholderData ?? keepPreviousData,
 
-      list:
-        raw?.data
-        ||
-        raw?.logs
-        ||
-        raw?.items
-        ||
-        [],
-
-      total:
-        raw?.total
-        ??
-        raw?.count
-        ??
-        0,
-    }),
+    select:(raw)=>
+      normalizePaginated(raw),
   })
 
 export const getCommitLogs=(params={})=>
   apiClient.get(
     '/audit-logs/commits',
-    {params}
+    {
+      params:
+        cleanQueryParams(params),
+    }
   )
 
 export const useCommitLogs=(
@@ -52,8 +53,9 @@ export const useCommitLogs=(
 )=>
   useQuery({
     queryKey:[
-      'commit-logs',
-      params,
+      ...queryKeys.auditLogs.commits(
+        cleanQueryParams(params)
+      ),
     ],
 
     queryFn:()=>
@@ -62,24 +64,9 @@ export const useCommitLogs=(
     enabled:
       options.enabled ?? true,
 
-    select:(raw)=>({
+    placeholderData:
+      options.placeholderData ?? keepPreviousData,
 
-      list:
-        raw?.data
-        ||
-        raw?.logs
-        ||
-        raw?.items
-        ||
-        raw?.activity
-        ||
-        [],
-
-      total:
-        raw?.total
-        ??
-        raw?.count
-        ??
-        0,
-    }),
+    select:(raw)=>
+      normalizePaginated(raw),
   })

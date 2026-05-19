@@ -9,11 +9,13 @@ import {
   Typography,
   Popconfirm,
   message,
+  Input,
 } from 'antd'
-
 import {
   Plus,
+  Download,
   Users,
+  Search,
   Trash2,
   Settings,
 } from 'lucide-react'
@@ -27,24 +29,53 @@ import CreateGroupModal from '../components/Groups/CreateGroupModal'
 import ManageMembersModal from '../components/Groups/ManageMembersModal'
 
 import {
-  normalizeList,
+  normalizePaginated,
 } from '../utils/normalize'
 
 import PageLoader from '../components/common/PageLoader'
 import PageError from '../components/common/PageError'
+import BulkActionBar from '../components/common/BulkActionBar'
+import useTableSelection from '../hooks/useTableSelection'
+import {downloadCsv} from '../utils/exportCsv'
+import useDebouncedValue from '../hooks/useDebouncedValue'
 
 const { Title, Text } = Typography
 
 const GroupsPage = () => {
+  const [searchTerm,setSearchTerm]=
+    useState('')
+
+  const [page,setPage]=
+    useState(1)
+
+  const [limit]=
+    useState(10)
+
+  const debouncedSearch=
+    useDebouncedValue(searchTerm,350)
 
   const {
     data: groupsResponse,
     isLoading,
+    isFetching,
     isError,
-  } = useGroups()
+  } = useGroups({
+    page,
+    limit,
+    search:debouncedSearch.trim(),
+  })
 
-  const groups =
-    normalizeList(groupsResponse)
+  const {
+    list:groups,
+    total,
+  }=normalizePaginated(groupsResponse)
+
+  const {
+    selectedRowKeys,
+    selectedCount,
+    rowSelection,
+    clearSelection,
+  }=useTableSelection()
 
   const deleteMutation =
     useDeleteGroup()
@@ -78,6 +109,22 @@ const GroupsPage = () => {
       }
     )
   }
+
+  const selectedGroups=
+    groups.filter((group)=>
+      selectedRowKeys.includes(group.id)
+    )
+
+  const exportGroups=(rows,filename)=>
+    downloadCsv({
+      filename,
+      rows,
+      columns:[
+        {header:'Group Name',value:'name'},
+        {header:'Description',value:'description'},
+        {header:'Members',value:'member_count'},
+      ],
+    })
 
   const columns = [
     {
@@ -285,14 +332,69 @@ const GroupsPage = () => {
         }}
       >
 
+        <Input
+          placeholder="Search groups..."
+          prefix={<Search size={18} />}
+          value={searchTerm}
+          onChange={(e)=>{
+            setSearchTerm(e.target.value)
+            setPage(1)
+          }}
+          style={{
+            maxWidth:300,
+            marginBottom:12,
+          }}
+        />
+
+        <div style={{ marginBottom: 12 }}>
+          <Button
+            icon={<Download size={16} />}
+            onClick={() =>
+              exportGroups(
+                groups,
+                'groups.csv'
+              )
+            }
+          >
+            Export
+          </Button>
+        </div>
+
+        <BulkActionBar
+          selectedCount={selectedCount}
+          onClear={clearSelection}
+          actions={
+            <Button
+              icon={<Download size={16} />}
+              onClick={() =>
+                exportGroups(
+                  selectedGroups,
+                  'groups-selected.csv'
+                )
+              }
+            >
+              Export Selected
+            </Button>
+          }
+        />
+
         <Table
           columns={columns}
 
           dataSource={groups}
 
           rowKey="id"
+          rowSelection={rowSelection}
 
-          pagination={false}
+          pagination={{
+            current:page,
+            pageSize:limit,
+            total,
+            showSizeChanger:false,
+            onChange:setPage,
+          }}
+
+          loading={isFetching}
 
           rowClassName={() =>
             'premium-table-row'

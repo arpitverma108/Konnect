@@ -7,6 +7,7 @@ const pool = require('../config/database');
 const { createSvnUser } = require('../utils/svn');
 const env = require('../config/env');
 const logger = require('../config/logger');
+const { logActivity, ACTIVITY_TYPES } = require('../services/activityLogger');
 
 const SECRET = env.JWT_SECRET;
 
@@ -208,6 +209,23 @@ exports.login = async (req, res) => {
     const refreshExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     await storeRefreshToken(client, user.id, refreshToken, refreshExpiry);
 
+    // 📊 Log login activity
+    const userAgent = req.get('user-agent') || 'unknown';
+    const ipAddress = req.ip || req.connection.remoteAddress || 'unknown';
+    await logActivity(db, {
+      event_type: ACTIVITY_TYPES.AUTH_LOGIN,
+      user_id: user.id,
+      action: `User logged in`,
+      entity: 'user',
+      entity_id: user.id,
+      metadata: {
+        username: user.username,
+        ip_address: ipAddress,
+        user_agent: userAgent,
+        login_method: 'credentials',
+      },
+    });
+
     await client.query('COMMIT');
 
     res.json({
@@ -338,6 +356,22 @@ exports.logout = async (req, res) => {
 
     // FIX 3.1: Revoke in DB
     await revokeRefreshToken(client, refreshToken);
+
+    // 📊 Log logout activity
+    const userAgent = req.get('user-agent') || 'unknown';
+    const ipAddress = req.ip || req.connection.remoteAddress || 'unknown';
+    await logActivity(db, {
+      event_type: ACTIVITY_TYPES.AUTH_LOGOUT,
+      user_id: req.user.id,
+      action: `User logged out`,
+      entity: 'user',
+      entity_id: req.user.id,
+      metadata: {
+        username: req.user.username,
+        ip_address: ipAddress,
+        user_agent: userAgent,
+      },
+    });
 
     // Also blacklist in Redis if available (belt-and-suspenders for immediate access token invalidation)
     const redis = require('../config/redis');

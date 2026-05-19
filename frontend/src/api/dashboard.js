@@ -1,11 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import apiClient from './index'
-
-const KEYS = {
-  stats: ['dashboard', 'stats'],
-  activity: (limit) => ['dashboard', 'activity', limit],
-  commits: (days) => ['dashboard', 'commits', days],
-}
+import {queryKeys} from '../lib/queryKeys'
+import {staleTimes} from '../lib/queryConfig'
 
 const fetchStats = async () => {
   return apiClient.get('/dashboard/stats')
@@ -21,21 +17,25 @@ const fetchCommitActivity = async (days = 7) => {
 
 export const useDashboardStats = () =>
   useQuery({
-    queryKey: KEYS.stats,
+    queryKey: queryKeys.dashboard.stats,
     queryFn: fetchStats,
-    staleTime: 30_000,
+    staleTime: staleTimes.short,
   })
 
-export const useActivity = (limit = 10) =>
+export const useDashboardActivity = (
+  limit = 10,
+  options = {}
+) =>
   useQuery({
-    queryKey: KEYS.activity(limit),
+    queryKey: queryKeys.dashboard.activity(limit),
     queryFn: () => fetchActivity(limit),
+    enabled: options.enabled ?? true,
     select: (res) => {
       if (!res) return []
       if (Array.isArray(res)) return res
       return res.activity || res.data || res.commits || res.items || []
     },
-    staleTime: 10_000,
+    staleTime: staleTimes.realtime,
     gcTime: 30_000,
     refetchOnMount: true,
     refetchOnWindowFocus: false,
@@ -43,7 +43,7 @@ export const useActivity = (limit = 10) =>
 
 export const useCommitActivity = (days = 7) =>
   useQuery({
-    queryKey: KEYS.commits(days),
+    queryKey: queryKeys.dashboard.commits(days),
     queryFn: () => fetchCommitActivity(days),
     select: (res) => {
       if (!res) return []

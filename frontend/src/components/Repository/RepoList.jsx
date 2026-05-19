@@ -10,6 +10,7 @@ import {
   Button,
   message,
   Tooltip,
+  Checkbox,
 } from 'antd'
 
 import {useNavigate} from 'react-router-dom'
@@ -27,6 +28,8 @@ const RepoList=({
   pageSize=12,
   total=0,
   onPageChange,
+  selectedRowKeys=[],
+  onSelectionChange,
 })=>{
 
   const navigate=useNavigate()
@@ -102,6 +105,17 @@ const RepoList=({
     )
   }
 
+  const toggleSelection=(repoId,checked)=>{
+    const nextKeys=checked
+      ?[
+        ...selectedRowKeys,
+        repoId,
+      ]
+      :selectedRowKeys.filter((id)=>id!==repoId)
+
+    onSelectionChange?.(nextKeys)
+  }
+
   if(loading){
 
     return(
@@ -142,6 +156,7 @@ const RepoList=({
               <div
                 style={{
                   display:'flex',
+                  justifyContent:'space-between',
                   gap:8,
                 }}
 
@@ -149,6 +164,20 @@ const RepoList=({
                   e.stopPropagation()
                 }
               >
+
+                {onSelectionChange&&(
+                  <Checkbox
+                    checked={
+                      selectedRowKeys.includes(repo.id)
+                    }
+                    onChange={(e)=>
+                      toggleSelection(
+                        repo.id,
+                        e.target.checked
+                      )
+                    }
+                  />
+                )}
 
                 <Popconfirm
                   title="Delete repository?"

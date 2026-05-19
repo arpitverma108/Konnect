@@ -8,10 +8,10 @@ import CommitChart from '../components/dashboard/CommitChart'
 
 import {
   useDashboardStats,
+  useDashboardActivity,
   useCommitActivity,
 } from '../api/dashboard'
 
-import {useAuditLogs} from '../api/auditLogs'
 import {useMe} from '../api/users'
 
 import useFormattedActivity from '../hooks/useFormattedActivity'
@@ -49,19 +49,17 @@ const DashboardPage=()=>{
   const {
     data:activityResponse,
     isLoading:activityLoading,
-  }=useAuditLogs(
-    {
-      page:1,
-      limit:10,
-    },
+  }=useDashboardActivity(
+    10,
     {
       enabled:isAdmin,
     }
   )
 
   const logs=
-  activityResponse?.list
-  || []
+    Array.isArray(activityResponse)
+      ? activityResponse
+      : []
   const activityList=
     useFormattedActivity(
       logs,
@@ -153,6 +151,7 @@ const DashboardPage=()=>{
             <ActivityFeed
               data={activityList}
               loading={activityLoading}
+              emptyText="No recent activity"
             />
           </Col>
         )}

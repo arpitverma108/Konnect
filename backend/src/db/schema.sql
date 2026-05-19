@@ -89,10 +89,33 @@ CREATE TABLE IF NOT EXISTS permissions (
   permission   VARCHAR(4)  NOT NULL
                CHECK (permission IN ('r','rw','')),
 
+  role         VARCHAR(20)
+               CHECK (role IN ('owner','maintainer','developer','viewer')),
+
   created_at   TIMESTAMPTZ DEFAULT NOW(),
+  updated_at   TIMESTAMPTZ DEFAULT NOW(),
 
   UNIQUE (repo_id, path, subject_type, subject_id)
 );
+
+ALTER TABLE permissions
+  ADD COLUMN IF NOT EXISTS role VARCHAR(20);
+
+ALTER TABLE permissions
+  ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'permissions_role_check'
+  ) THEN
+    ALTER TABLE permissions
+      ADD CONSTRAINT permissions_role_check
+      CHECK (role IN ('owner','maintainer','developer','viewer'));
+  END IF;
+END $$;
 
 -- ================================
 -- HOOKS
@@ -109,20 +132,42 @@ CREATE TABLE IF NOT EXISTS hooks (
 );
 
 -- ================================
--- ACTIVITY
+-- ACTIVITY (Extended for structured events)
 -- ================================
 CREATE TABLE IF NOT EXISTS activity (
   id            SERIAL PRIMARY KEY,
-  repo_id       INTEGER     NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-  revision      INTEGER     NOT NULL,
+  repo_id       INTEGER     REFERENCES repositories(id) ON DELETE CASCADE,
+  revision      INTEGER,
   author        VARCHAR(64),
   message       TEXT,
   committed_at  TIMESTAMPTZ,
   paths_changed JSONB,
+  
+  -- Structured event fields
+  event_type    VARCHAR(50) DEFAULT 'commit',
+  action        TEXT,
+  entity        VARCHAR(50),
+  entity_id     INTEGER,
+  user_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  metadata      JSONB DEFAULT '{}',
+  
   created_at    TIMESTAMPTZ DEFAULT NOW(),
 
-  UNIQUE (repo_id, revision)
 );
+
+-- Add new columns to existing activity table if they don't exist
+ALTER TABLE activity
+  ADD COLUMN IF NOT EXISTS event_type VARCHAR(50) DEFAULT 'commit',
+  ADD COLUMN IF NOT EXISTS action TEXT,
+  ADD COLUMN IF NOT EXISTS entity VARCHAR(50),
+  ADD COLUMN IF NOT EXISTS entity_id INTEGER,
+  ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}';
+
+-- Add indexes for efficient event querying
+CREATE INDEX IF NOT EXISTS idx_activity_event_type ON activity(event_type);
+CREATE INDEX IF NOT EXISTS idx_activity_user_id ON activity(user_id);
+CREATE INDEX IF NOT EXISTS idx_activity_entity ON activity(entity, entity_id);
 
 -- ================================
 -- ADMIN LOGS (IMPORTANT)
@@ -144,23 +189,133 @@ CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 
 CREATE INDEX IF NOT EXISTS idx_permissions_repo   ON permissions(repo_id);
 CREATE INDEX IF NOT EXISTS idx_permissions_subj   ON permissions(subject_type, subject_id);
+CREATE INDEX IF NOT EXISTS idx_permissions_repo_path ON permissions(repo_id, path);
+CREATE INDEX IF NOT EXISTS idx_permissions_repo_role ON permissions(repo_id, role);
 
 CREATE INDEX IF NOT EXISTS idx_activity_repo      ON activity(repo_id);
 CREATE INDEX IF NOT EXISTS idx_activity_committed ON activity(committed_at DESC);
 CREATE INDEX IF NOT EXISTS idx_activity_author    ON activity(author);
 
+-- Partial unique index: only enforce uniqueness where BOTH repo_id AND revision
+-- are non-NULL (i.e. SVN commits).  System events (user_create, login, sync…)
+-- have NULL repo_id/revision and must NOT be blocked by a uniqueness constraint.
+-- We DROP the old blanket constraint first in case this schema is applied to an
+-- existing DB; the DO NOTHING is a no-op on a fresh install.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'activity_repo_id_revision_key'
+  ) THEN
+    ALTER TABLE activity DROP CONSTRAINT activity_repo_id_revision_key;
+  END IF;
+END$$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_activity_svn_unique
+  ON activity (repo_id, revision)
+  WHERE repo_id IS NOT NULL AND revision IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_hooks_repo         ON hooks(repo_id);
+
+-- ================================
+-- AUTHZ GENERATION JOBS
+-- Tracks regenerated SVN authz state. Useful for production audit,
+-- monitoring, and recovery after reload failures.
+-- ================================
+CREATE TABLE IF NOT EXISTS authz_generation_jobs (
+  id            BIGSERIAL PRIMARY KEY,
+  status        VARCHAR(20) NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending','running','success','failed')),
+  reason        TEXT,
+  requested_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  error_message TEXT,
+  started_at    TIMESTAMPTZ,
+  finished_at   TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_authz_jobs_status_created
+  ON authz_generation_jobs(status, created_at DESC);
+
+-- ================================
+-- READABLE ID VIEWS
+-- These views keep application compatibility with existing id columns while
+-- giving humans explicit names like user_id, repository_id, permission_id.
+-- ================================
+CREATE OR REPLACE VIEW v_users AS
+SELECT
+  id AS user_id,
+  username,
+  email,
+  full_name,
+  role AS platform_role,
+  is_active,
+  created_at,
+  updated_at
+FROM users;
+
+CREATE OR REPLACE VIEW v_repositories AS
+SELECT
+  id AS repository_id,
+  name AS repository_name,
+  description,
+  disk_path,
+  is_active,
+  created_at
+FROM repositories;
+
+CREATE OR REPLACE VIEW v_groups AS
+SELECT
+  id AS group_id,
+  name AS group_name,
+  description,
+  created_at
+FROM groups;
+
+CREATE OR REPLACE VIEW v_repository_permissions AS
+SELECT
+  p.id AS permission_id,
+  p.repo_id AS repository_id,
+  r.name AS repository_name,
+  p.path AS svn_path,
+  p.subject_type,
+  CASE WHEN p.subject_type = 'user' THEN p.subject_id END AS user_id,
+  CASE WHEN p.subject_type = 'group' THEN p.subject_id END AS group_id,
+  CASE p.subject_type
+    WHEN 'user' THEN u.username
+    WHEN 'group' THEN g.name
+  END AS subject_name,
+  p.role AS repository_role,
+  p.permission AS svn_access,
+  p.created_at,
+  p.updated_at
+FROM permissions p
+JOIN repositories r ON r.id = p.repo_id
+LEFT JOIN users u ON p.subject_type = 'user' AND u.id = p.subject_id
+LEFT JOIN groups g ON p.subject_type = 'group' AND g.id = p.subject_id;
 
 -- ================================
 -- UPDATED_AT TRIGGER
 -- ================================
-CREATE OR REPLACE FUNCTION update_updated_at()
-RETURNS TRIGGER AS $$
+DO $$
 BEGIN
-  NEW.updated_at = NOW();
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public'
+      AND p.proname = 'update_updated_at'
+      AND pg_get_function_arguments(p.oid) = ''
+  ) THEN
+    CREATE FUNCTION update_updated_at()
+    RETURNS TRIGGER AS $fn$
+    BEGIN
+      NEW.updated_at = NOW();
+      RETURN NEW;
+    END;
+    $fn$ LANGUAGE plpgsql;
+  END IF;
+END $$;
 
 -- USERS trigger
 DROP TRIGGER IF EXISTS trg_users_updated_at ON users;
@@ -172,6 +327,12 @@ CREATE TRIGGER trg_users_updated_at
 DROP TRIGGER IF EXISTS trg_hooks_updated_at ON hooks;
 CREATE TRIGGER trg_hooks_updated_at
   BEFORE UPDATE ON hooks
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- PERMISSIONS trigger
+DROP TRIGGER IF EXISTS trg_permissions_updated_at ON permissions;
+CREATE TRIGGER trg_permissions_updated_at
+  BEFORE UPDATE ON permissions
   FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 -- ================================

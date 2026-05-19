@@ -32,9 +32,10 @@ async function reloadApache() {
 
   } catch (err) {
     // 🔥 CRITICAL FIX → THROW ERROR
-    logger.error('Apache reload failed:', err.message);
+    const detail = err.stderr || err.stdout || err.message;
+    logger.error('Apache reload failed:', detail);
 
-    throw new Error('Apache reload failed'); // ✅ IMPORTANT
+    throw new Error(`Apache reload failed: ${detail}`); // ✅ IMPORTANT
   }
 }
 
@@ -50,6 +51,8 @@ function generateVirtualHostConfig({ reposRoot, htpasswdPath, authzPath }) {
 <Location /svn>
     DAV svn
     SVNParentPath "${normalize(reposRoot)}"
+    SVNListParentPath Off
+    SVNPathAuthz short_circuit
 
     AuthType Basic
     AuthName "SVN Repository"

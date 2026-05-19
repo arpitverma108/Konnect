@@ -4,6 +4,8 @@ const initialState = {
   sidebarCollapsed: false,
   token: null,
   refreshToken: null,
+  authHydrated: false,
+  authHydrationError: null,
   activeRepository: null,
 }
 
@@ -36,7 +38,10 @@ const useAppStore = create((set) => ({
 
   set({
     token,
-    refreshToken,
+    refreshToken:
+      refreshToken || null,
+    authHydrated: true,
+    authHydrationError: null,
   })
 },
 
@@ -46,7 +51,11 @@ const useAppStore = create((set) => ({
       'refreshToken'
     )
 
-    set(initialState)
+    set({
+      ...initialState,
+      authHydrated: true,
+      authHydrationError: null,
+    })
   },
 
   setActiveRepository: (repo) =>
@@ -66,18 +75,25 @@ const useAppStore = create((set) => ({
           'refreshToken'
         )
 
-      if (token) {
-        set({
-          token,
-          refreshToken:
-            refreshToken || null,
-        })
-      }
+      set({
+        token: token || null,
+        refreshToken:
+          refreshToken || null,
+        authHydrated: true,
+        authHydrationError: null,
+      })
     } catch (err) {
       console.error(
         'Failed to hydrate auth',
         err
       )
+
+      set({
+        authHydrated: true,
+        authHydrationError:
+          err?.message ||
+          'Failed to hydrate auth',
+      })
     }
   },
 }))

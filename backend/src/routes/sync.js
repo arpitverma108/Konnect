@@ -7,6 +7,7 @@ const router = express.Router();
 const db = require('../config/database');
 const activitySvc = require('../services/activityService');
 const logger = require('../config/logger');
+const { logActivity, ACTIVITY_TYPES } = require('../services/activityLogger');
 
 const auth = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
@@ -47,6 +48,7 @@ router.post(
   auth,
   authorize('admin', 'super_admin'),
   wrap(async (req, res) => {
+    const startTime = Date.now();
     const { rows: repos } = await db.query(
       'SELECT id, disk_path FROM repositories'
     );
@@ -66,6 +68,7 @@ router.post(
 
     const successCount = results.filter(r => r.status === 'fulfilled').length;
     const failedCount  = results.filter(r => r.status === 'rejected').length;
+    const duration = Date.now() - startTime;
 
     results.forEach((result, index) => {
       if (result.status === 'rejected') {
@@ -76,6 +79,21 @@ router.post(
     });
 
     logger.info(`Activity sync completed: ${successCount} success, ${failedCount} failed`);
+
+    // 📊 Log sync activity
+    await logActivity(db, {
+      event_type: ACTIVITY_TYPES.SYNC_RUN,
+      user_id: req.user.id,
+      action: `Sync completed: ${successCount} repos synced, ${failedCount} failed`,
+      entity: 'system',
+      metadata: {
+        repos_synced: successCount,
+        repos_failed: failedCount,
+        total_repos: repos.length,
+        duration_ms: duration,
+        status: failedCount === 0 ? 'success' : 'partial_failure',
+      },
+    });
 
     return res.json({
       message: 'Activity sync completed',

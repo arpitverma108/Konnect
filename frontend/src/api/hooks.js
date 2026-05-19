@@ -1,11 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import apiClient from './index'
-
-const KEYS = {
-  templates: ['hook-templates'],
-  byRepo: (repoId) => ['hooks', repoId],
-  single: (repoId, hookName) => ['hooks', repoId, hookName],
-}
+import {queryKeys} from '../lib/queryKeys'
 
 // ─── Fetchers ─────────────────────────────────────────────────────────────────
 
@@ -22,18 +17,18 @@ const deleteHook = ({ repoId, hookName }) =>
 // ─── Hooks ────────────────────────────────────────────────────────────────────
 
 export const useHookTemplates = () =>
-  useQuery({ queryKey: KEYS.templates, queryFn: fetchTemplates })
+  useQuery({ queryKey: queryKeys.hooks.templates, queryFn: fetchTemplates })
 
 export const useRepoHooks = (repoId) =>
   useQuery({
-    queryKey: KEYS.byRepo(repoId),
+    queryKey: queryKeys.hooks.byRepo(repoId),
     queryFn: () => fetchRepoHooks(repoId),
     enabled: !!repoId,
   })
 
 export const useHook = (repoId, hookName) =>
   useQuery({
-    queryKey: KEYS.single(repoId, hookName),
+    queryKey: queryKeys.hooks.single(repoId, hookName),
     queryFn: () => fetchHook(repoId, hookName),
     enabled: !!(repoId && hookName),
   })
@@ -43,8 +38,8 @@ export const useSaveHook = () => {
   return useMutation({
     mutationFn: saveHook,
     onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: KEYS.byRepo(vars.repoId) })
-      qc.invalidateQueries({ queryKey: KEYS.single(vars.repoId, vars.hookName) })
+      qc.invalidateQueries({ queryKey: queryKeys.hooks.byRepo(vars.repoId) })
+      qc.invalidateQueries({ queryKey: queryKeys.hooks.single(vars.repoId, vars.hookName) })
     },
   })
 }
@@ -53,7 +48,7 @@ export const useToggleHook = () => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: toggleHook,
-    onSuccess: (_, vars) => qc.invalidateQueries({ queryKey: KEYS.byRepo(vars.repoId) }),
+    onSuccess: (_, vars) => qc.invalidateQueries({ queryKey: queryKeys.hooks.byRepo(vars.repoId) }),
   })
 }
 
@@ -61,6 +56,6 @@ export const useDeleteHook = () => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: deleteHook,
-    onSuccess: (_, vars) => qc.invalidateQueries({ queryKey: KEYS.byRepo(vars.repoId) }),
+    onSuccess: (_, vars) => qc.invalidateQueries({ queryKey: queryKeys.hooks.byRepo(vars.repoId) }),
   })
 }

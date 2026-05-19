@@ -12,8 +12,24 @@ const apiClient = axios.create({
   },
 })
 
+const getStoredToken=()=>{
+  const state=useAppStore.getState()
+
+  return state.authHydrated
+    ? state.token
+    : state.token || localStorage.getItem('token')
+}
+
+const getStoredRefreshToken=()=>{
+  const state=useAppStore.getState()
+
+  return state.authHydrated
+    ? state.refreshToken
+    : state.refreshToken || localStorage.getItem('refreshToken')
+}
+
 apiClient.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token')
+  const token = getStoredToken()
 
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
@@ -42,7 +58,7 @@ apiClient.interceptors.response.use(
 
   async (error) => {
     const originalRequest = error.config
-    const token = localStorage.getItem('token')
+    const token = getStoredToken()
 
     if (!token) {
       return Promise.reject(error)
@@ -67,7 +83,7 @@ apiClient.interceptors.response.use(
       isRefreshing = true
 
       try {
-        const refreshToken = localStorage.getItem('refreshToken')
+        const refreshToken = getStoredRefreshToken()
 
         if (!refreshToken) {
           queryClient.clear()
@@ -93,7 +109,12 @@ window.location.replace('/login')
           throw new Error('Invalid refresh response')
         }
 
-        localStorage.setItem('token', newToken)
+        useAppStore
+          .getState()
+          .setAuth({
+            token:newToken,
+            refreshToken,
+          })
 
         apiClient.defaults.headers.common.Authorization =
           `Bearer ${newToken}`

@@ -2,6 +2,11 @@ import {
   QueryClient,
 } from '@tanstack/react-query'
 
+import {
+  gcTimes,
+  staleTimes,
+} from './queryConfig'
+
 export const queryClient=
   new QueryClient({
 
@@ -10,10 +15,10 @@ export const queryClient=
       queries:{
 
         staleTime:
-          60*1000,
+          staleTimes.standard,
 
         gcTime:
-          10*60*1000,
+          gcTimes.standard,
 
         retry:1,
 

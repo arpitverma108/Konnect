@@ -7,8 +7,13 @@
  */
 function validate(schema, property = 'body') {
   return (req, res, next) => {
-    const { error } = schema.validate(req[property], { abortEarly: false });
+    const { error, value } = schema.validate(req[property], {
+      abortEarly: false,
+      stripUnknown: true,
+    });
+
     if (error) return next(error);
+    req[property] = value;
     next();
   };
 }

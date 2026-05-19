@@ -6,6 +6,7 @@ import {
   List,
   Typography,
   message,
+  Spin,
 } from 'antd'
 
 import { Bell } from 'lucide-react'
@@ -24,6 +25,7 @@ import relativeTime from 'dayjs/plugin/relativeTime'
 
 import useFormattedActivity from '../hooks/useFormattedActivity'
 import useRole from '../hooks/useRole'
+import EmptyState from './common/EmptyState'
 
 dayjs.extend(relativeTime)
 
@@ -41,6 +43,7 @@ const NotificationBell = () => {
 
   const {
   data:notificationsRes,
+  isLoading:notificationsLoading,
 }=useNotifications(
   {limit:10},
   {
@@ -54,6 +57,9 @@ const {
   enabled:!!me && isAdmin,
 })
 
+const markReadMutation=
+  useMarkNotificationsRead()
+
 const notifications=
   Array.isArray(notificationsRes?.list)
     ?notificationsRes.list
@@ -63,9 +69,6 @@ const notifications=
   useFormattedActivity(
     notifications
   )
-
-  const [seenCount, setSeenCount] =
-    React.useState(0)
 
   const prevCountRef =
     React.useRef(0)
@@ -165,11 +168,20 @@ const notifications=
       }}
     >
 
-      {latestLogs.length === 0 ? (
+      {notificationsLoading ? (
 
-        <Text type="secondary">
-          No notifications
-        </Text>
+        <div
+          style={{
+            textAlign:'center',
+            padding:24,
+          }}
+        >
+          <Spin/>
+        </div>
+
+      ) : latestLogs.length === 0 ? (
+
+        <EmptyState title="No notifications"/>
 
       ) : (
 
@@ -227,10 +239,9 @@ const notifications=
       onOpenChange={(isOpen) => {
 
         if (isOpen) {
-
-          setSeenCount(
-            formattedLogs.length
-          )
+          if(unreadCount>0){
+            markReadMutation.mutate()
+          }
         }
       }}
     >

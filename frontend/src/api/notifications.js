@@ -6,29 +6,45 @@ import {
 } from '@tanstack/react-query'
 
 import apiClient from './index'
+import {queryKeys} from '../lib/queryKeys'
+import {staleTimes} from '../lib/queryConfig'
+import {normalizePaginated} from '../utils/normalize'
 
 const normalize=(res)=>{
+  const paginated=
+    normalizePaginated(res)
 
+  return{
+    ...paginated,
+    list:
+      paginated.list.map((item)=>({
+        id:
+          item.id ??
+          item.notification_id ??
+          item.audit_id ??
+          item.created_at,
+        read:
+          item.read ??
+          item.is_read ??
+          item.read_at,
+        ...item,
+      })),
+  }
+}
+
+const shouldPoll=(enabled)=>
+  enabled && !document.hidden
+
+const normalizeCount=(res)=>{
   const raw=
     res?.data ?? res
 
-  const list=
-    raw?.data
-    ||
-    raw?.notifications
-    ||
-    raw?.items
-    ||
-    []
-
   return{
-    list,
-    total:
-      raw?.total
-      ??
-      raw?.count
-      ??
-      list.length,
+    count:
+      raw?.count ??
+      raw?.unread ??
+      raw?.unread_count ??
+      0,
   }
 }
 
@@ -39,8 +55,7 @@ export const useNotifications=(
   useQuery({
 
     queryKey:[
-      'notifications',
-      params,
+      ...queryKeys.notifications.list(params),
     ],
 
     queryFn:()=>
@@ -53,19 +68,15 @@ export const useNotifications=(
       options.enabled ?? true,
 
     refetchInterval:()=>{
-
-      if(
-        !options.enabled
-        ||
-        document.hidden
-      ){
+      if(!shouldPoll(options.enabled ?? true)){
         return false
       }
 
       return 30000
     },
 
-    staleTime:30000,
+    staleTime:
+      staleTimes.short,
 
     refetchOnWindowFocus:false,
 
@@ -77,7 +88,7 @@ export const useNotificationCount=
     useQuery({
 
       queryKey:[
-        'notifications-count',
+        ...queryKeys.notifications.count,
       ],
 
       queryFn:()=>
@@ -88,9 +99,18 @@ export const useNotificationCount=
       enabled:
         options.enabled ?? true,
 
-      staleTime:30000,
+      staleTime:
+        staleTimes.short,
 
-      refetchInterval:30000,
+      refetchInterval:()=>{
+        if(!shouldPoll(options.enabled ?? true)){
+          return false
+        }
+
+        return 30000
+      },
+
+      select:normalizeCount,
     })
 
 export const useMarkNotificationsRead=
@@ -110,13 +130,13 @@ export const useMarkNotificationsRead=
 
         qc.invalidateQueries({
           queryKey:[
-            'notifications',
+            ...queryKeys.notifications.all,
           ],
         })
 
         qc.invalidateQueries({
           queryKey:[
-            'notifications-count',
+            ...queryKeys.notifications.count,
           ],
         })
       },

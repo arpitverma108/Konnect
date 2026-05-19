@@ -25,6 +25,14 @@ import {
 
 const { Title, Text } = Typography
 
+const healthTone = {
+  healthy: 'green',
+  configured: 'blue',
+  managed: 'purple',
+  protected: 'purple',
+  unknown: 'default',
+}
+
 const InfoCard = ({
   icon,
   title,
@@ -70,6 +78,34 @@ const InfoCard = ({
   </div>
 )
 
+const HealthDescriptions = ({
+  items = [],
+  descStyle,
+}) => (
+  <Descriptions
+    bordered
+    column={1}
+    size="small"
+    {...descStyle}
+  >
+    {items.map((item) => (
+      <Descriptions.Item
+        key={item.label}
+        label={item.label}
+      >
+        <Tag
+          color={
+            healthTone[item.status] ||
+            healthTone.unknown
+          }
+        >
+          {item.value}
+        </Tag>
+      </Descriptions.Item>
+    ))}
+  </Descriptions>
+)
+
 const SettingsPage = () => {
 
   const { data: reposResponse } =
@@ -83,6 +119,96 @@ const SettingsPage = () => {
 
   const users =
     normalizeList(usersResponse)
+
+  const healthSections = [
+    {
+      title: 'SVN Configuration',
+      icon: (
+        <HardDrive
+          size={18}
+          color="#722ed1"
+        />
+      ),
+      items: [
+        {
+          label: 'Repository Storage',
+          value: 'Configured',
+          status: 'configured',
+        },
+        {
+          label: 'SVN Tools',
+          value: 'Available',
+          status: 'healthy',
+        },
+        {
+          label: 'Repository Access',
+          value: 'Managed by Backend',
+          status: 'managed',
+        },
+      ],
+    },
+    {
+      title: 'Authentication & Permissions',
+      icon: (
+        <Shield
+          size={18}
+          color="#52c41a"
+        />
+      ),
+      items: [
+        {
+          label: 'Authentication',
+          value: 'Enabled',
+          status: 'healthy',
+        },
+        {
+          label: 'Authorization',
+          value: 'Active',
+          status: 'configured',
+        },
+        {
+          label: 'Permission Sync',
+          value: 'Automatic',
+          status: 'managed',
+        },
+      ],
+      footer: (
+        <Alert
+          style={{ marginTop: 16 }}
+          type="info"
+          showIcon
+          message="Permissions are automatically synchronized"
+          description="Changes to users, groups, repositories, and permissions are applied automatically by the backend."
+        />
+      ),
+    },
+    {
+      title: 'Database',
+      icon: (
+        <Database
+          size={18}
+          color="#faad14"
+        />
+      ),
+      items: [
+        {
+          label: 'Database Status',
+          value: 'Connected',
+          status: 'healthy',
+        },
+        {
+          label: 'Credential Storage',
+          value: 'Protected',
+          status: 'configured',
+        },
+        {
+          label: 'Password Security',
+          value: 'bcrypt Enabled',
+          status: 'protected',
+        },
+      ],
+    },
+  ]
 
   const descStyle = {
     labelStyle: {
@@ -180,133 +306,25 @@ const SettingsPage = () => {
           </InfoCard>
         </Col>
 
-        <Col xs={24} lg={12}>
-          <InfoCard
-            icon={
-              <HardDrive
-                size={18}
-                color="#722ed1"
-              />
-            }
-
-            title="SVN Configuration"
+        {healthSections.map((section) => (
+          <Col
+            key={section.title}
+            xs={24}
+            lg={12}
           >
-            <Descriptions
-              bordered
-              column={1}
-              size="small"
-              {...descStyle}
+            <InfoCard
+              icon={section.icon}
+              title={section.title}
             >
-
-              <Descriptions.Item label="Repository Storage">
-                <Tag color="blue">
-                  Configured
-                </Tag>
-              </Descriptions.Item>
-
-              <Descriptions.Item label="SVN Tools">
-                <Tag color="green">
-                  Available
-                </Tag>
-              </Descriptions.Item>
-
-              <Descriptions.Item label="Repository Access">
-                <Tag color="purple">
-                  Managed by Backend
-                </Tag>
-              </Descriptions.Item>
-
-            </Descriptions>
-          </InfoCard>
-        </Col>
-
-        <Col xs={24} lg={12}>
-          <InfoCard
-            icon={
-              <Shield
-                size={18}
-                color="#52c41a"
+              <HealthDescriptions
+                items={section.items}
+                descStyle={descStyle}
               />
-            }
 
-            title="Authentication & Permissions"
-          >
-            <Descriptions
-              bordered
-              column={1}
-              size="small"
-              {...descStyle}
-            >
-
-              <Descriptions.Item label="Authentication">
-                <Tag color="green">
-                  Enabled
-                </Tag>
-              </Descriptions.Item>
-
-              <Descriptions.Item label="Authorization">
-                <Tag color="blue">
-                  Active
-                </Tag>
-              </Descriptions.Item>
-
-              <Descriptions.Item label="Permission Sync">
-                <Tag color="purple">
-                  Automatic
-                </Tag>
-              </Descriptions.Item>
-
-            </Descriptions>
-
-            <Alert
-              style={{ marginTop: 16 }}
-              type="info"
-              showIcon
-              message="Permissions are automatically synchronized"
-              description="Changes to users, groups, repositories, and permissions are applied automatically by the backend."
-            />
-          </InfoCard>
-        </Col>
-
-        <Col xs={24} lg={12}>
-          <InfoCard
-            icon={
-              <Database
-                size={18}
-                color="#faad14"
-              />
-            }
-
-            title="Database"
-          >
-            <Descriptions
-              bordered
-              column={1}
-              size="small"
-              {...descStyle}
-            >
-
-              <Descriptions.Item label="Database Status">
-                <Tag color="green">
-                  Connected
-                </Tag>
-              </Descriptions.Item>
-
-              <Descriptions.Item label="Credential Storage">
-                <Tag color="blue">
-                  Protected
-                </Tag>
-              </Descriptions.Item>
-
-              <Descriptions.Item label="Password Security">
-                <Tag color="purple">
-                  bcrypt Enabled
-                </Tag>
-              </Descriptions.Item>
-
-            </Descriptions>
-          </InfoCard>
-        </Col>
+              {section.footer}
+            </InfoCard>
+          </Col>
+        ))}
 
       </Row>
     </div>

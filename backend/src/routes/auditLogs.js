@@ -49,6 +49,8 @@ router.get(
       values.push(user);
     }
 
+    // FIX: removed al.details — that column does not exist in admin_logs.
+    // The schema has: id, user_id, action, entity, entity_id, created_at
     const { rows } = await db.query(`
       SELECT
         al.id,

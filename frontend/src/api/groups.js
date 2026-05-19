@@ -1,15 +1,13 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import apiClient from './index'
-
-const KEYS = {
-  all: ['groups'],
-  detail: (id) => ['groups', id],
-  members: (id) => ['groups', id, 'members'],
-}
+import {queryKeys} from '../lib/queryKeys'
 
 // ─── Fetchers ─────────────────────────────────────────────────────────────────
 
-const fetchGroups = () => apiClient.get('/groups')
+export const getGroups = (params = {}) =>
+  apiClient.get('/groups', { params })
+
+const fetchGroups = (params = {}) => getGroups(params)
 const fetchGroup = (id) => apiClient.get(`/groups/${id}`)
 const fetchGroupMembers = (id) => apiClient.get(`/groups/${id}/members`)
 const createGroup = (data) =>
@@ -26,19 +24,26 @@ const removeGroupMember = ({ groupId, userId }) =>
 
 // ─── Hooks ────────────────────────────────────────────────────────────────────
 
-export const useGroups = () =>
-  useQuery({ queryKey: KEYS.all, queryFn: fetchGroups })
+export const useGroups = (
+  params = {},
+  options = {}
+) =>
+  useQuery({
+    queryKey: queryKeys.groups.list(params),
+    queryFn: () => fetchGroups(params),
+    enabled: options.enabled ?? true,
+  })
 
 export const useGroup = (id) =>
   useQuery({
-    queryKey: KEYS.detail(id),
+    queryKey: queryKeys.groups.detail(id),
     queryFn: () => fetchGroup(id),
     enabled: !!id,
   })
 
 export const useGroupMembers = (id) =>
   useQuery({
-    queryKey: KEYS.members(id),
+    queryKey: queryKeys.groups.members(id),
     queryFn: () => fetchGroupMembers(id),
     enabled: !!id,
   })
@@ -47,7 +52,7 @@ export const useCreateGroup = () => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: createGroup,
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.all }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.groups.all }),
   })
 }
 
@@ -55,7 +60,7 @@ export const useDeleteGroup = () => {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: deleteGroup,
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.all }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.groups.all }),
   })
 }
 
@@ -64,8 +69,8 @@ export const useAddGroupMember = () => {
   return useMutation({
     mutationFn: addGroupMember,
     onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: KEYS.members(vars.groupId) })
-      qc.invalidateQueries({ queryKey: KEYS.all })
+      qc.invalidateQueries({ queryKey: queryKeys.groups.members(vars.groupId) })
+      qc.invalidateQueries({ queryKey: queryKeys.groups.all })
     },
   })
 }
@@ -75,8 +80,8 @@ export const useRemoveGroupMember = () => {
   return useMutation({
     mutationFn: removeGroupMember,
     onSuccess: (_, vars) => {
-      qc.invalidateQueries({ queryKey: KEYS.members(vars.groupId) })
-      qc.invalidateQueries({ queryKey: KEYS.all })
+      qc.invalidateQueries({ queryKey: queryKeys.groups.members(vars.groupId) })
+      qc.invalidateQueries({ queryKey: queryKeys.groups.all })
     },
   })
 }

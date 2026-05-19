@@ -1,12 +1,13 @@
-import React,{useState,useEffect} from 'react'
+import React,{useState,useMemo} from 'react'
 
 import {
   Tabs,Table,Empty,Spin,
-  Breadcrumb,Modal,Button,Input,
+  Breadcrumb,Button,Input,
+  Tooltip,message,Typography,
 } from 'antd'
 
 import {
-  Folder,File,
+  Copy,ExternalLink,Folder,File,
 } from 'lucide-react'
 
 import {useNavigate} from 'react-router-dom'
@@ -15,6 +16,7 @@ import {
   useRepoFilesByPath,
   useRepoCommits,
   useFileContent,
+  useBranches,
   useCreateBranch,
   useDeleteBranch,
   useTags,
@@ -22,7 +24,10 @@ import {
   useDeleteTag,
 } from '../../api/repositories'
 
-import Prism from 'prismjs'
+import {resolveRepositoryUrl} from '../../utils/repository'
+
+import FileViewer from './FileViewer'
+import BranchManager from './BranchManager'
 
 import 'prismjs/themes/prism-tomorrow.css'
 import 'prismjs/components/prism-javascript'
@@ -32,6 +37,8 @@ import 'prismjs/components/prism-markdown'
 
 const ROOT_PREFIX='trunk'
 const MAX_FILE_SIZE=200000
+const {Text}=Typography
+
 const RepoDetail=({repo})=>{
 
   const [activeTab,setActiveTab]=useState('files')
@@ -42,6 +49,11 @@ const RepoDetail=({repo})=>{
   const [tagName,setTagName]=useState('')
 
   const repoId=Number(repo?.id)
+  const repoUrl=useMemo(
+    ()=>
+      resolveRepositoryUrl(repo),
+    [repo]
+  )
 
   const navigate=useNavigate()
 
@@ -63,26 +75,10 @@ const RepoDetail=({repo})=>{
     selectedFile
   )
 
-useEffect(()=>{
-
-  if(
-    fileContent&&typeof fileContent==='string'&&
-    fileContent.length<=MAX_FILE_SIZE
-  ){
-    Prism.highlightAll()
-  }
-},[fileContent])
-
-  const treeBranches=
-    tree.find(
-      (item)=>
-        item.name==='branches'
-    )?.children||[]
-
-  const branches=
-    treeBranches.map((b)=>b.name)
-
-  const branchLoading=false
+  const {
+    data:branches=[],
+    isLoading:branchLoading,
+  }=useBranches(repoId)
 
   const createBranchMutation=
     useCreateBranch(repoId)
@@ -163,6 +159,32 @@ useEffect(()=>{
     )
   }
 
+  const copyRepositoryUrl=async()=>{
+    if(!repoUrl){
+      message.error('Repository URL is unavailable')
+      return
+    }
+
+    try{
+      await navigator.clipboard.writeText(repoUrl)
+      message.success('Repository URL copied')
+    }catch{
+      message.error('Failed to copy repository URL')
+    }
+  }
+
+  const openRepositoryUrl=()=>{
+    if(!repoUrl){
+      return
+    }
+
+    window.open(
+      repoUrl,
+      '_blank',
+      'noopener,noreferrer'
+    )
+  }
+
   const fileColumns=[
     {
       title:'Name',
@@ -238,6 +260,90 @@ useEffect(()=>{
 
   return (
     <>
+
+      <div
+        className="glass-panel"
+        style={{
+          padding:16,
+          marginBottom:20,
+        }}
+      >
+        <div
+          style={{
+            display:'flex',
+            alignItems:'center',
+            justifyContent:'space-between',
+            gap:16,
+            flexWrap:'wrap',
+          }}
+        >
+          <div
+            style={{
+              minWidth:0,
+              flex:1,
+            }}
+          >
+            <Text
+              type="secondary"
+              style={{
+                display:'block',
+                marginBottom:6,
+                fontSize:12,
+                textTransform:'uppercase',
+                letterSpacing:0,
+              }}
+            >
+              Repository URL
+            </Text>
+
+            <Tooltip title={repoUrl || 'Repository URL unavailable'}>
+              <Text
+                code
+                style={{
+                  display:'block',
+                  maxWidth:'100%',
+                  overflow:'hidden',
+                  textOverflow:'ellipsis',
+                  whiteSpace:'nowrap',
+                  color:repoUrl
+                    ?'var(--text-main)'
+                    :'var(--text-muted)',
+                  background:'rgba(13,17,23,0.72)',
+                  border:'1px solid var(--border-color)',
+                  borderRadius:6,
+                  padding:'8px 10px',
+                }}
+              >
+                {repoUrl || 'Not available'}
+              </Text>
+            </Tooltip>
+          </div>
+
+          <div
+            style={{
+              display:'flex',
+              gap:8,
+              flexShrink:0,
+            }}
+          >
+            <Tooltip title="Copy Repository URL">
+              <Button
+                icon={<Copy size={16}/>}
+                onClick={copyRepositoryUrl}
+                disabled={!repoUrl}
+              />
+            </Tooltip>
+
+            <Tooltip title="Open Repository URL">
+              <Button
+                icon={<ExternalLink size={16}/>}
+                onClick={openRepositoryUrl}
+                disabled={!repoUrl}
+              />
+            </Tooltip>
+          </div>
+        </div>
+      </div>
 
       <Tabs
         activeKey={activeTab}
@@ -354,77 +460,14 @@ useEffect(()=>{
             label:'Branches',
 
             children:(
-              <>
-                <div
-                  style={{
-                    display:'flex',
-                    gap:10,
-                    marginBottom:16,
-                  }}
-                >
-
-                  <Input
-                    value={branchName}
-
-                    onChange={(e)=>
-                      setBranchName(
-                        e.target.value
-                      )
-                    }
-                  />
-
-                  <Button
-                    type="primary"
-
-                    onClick={()=>
-                      createBranchMutation.mutate({
-                        branchName,
-                      })
-                    }
-                  >
-                    Create
-                  </Button>
-
-                </div>
-
-                {branchLoading?(
-                  <Spin/>
-                ):(
-                  <Table
-                    dataSource={
-                      branches.map((b)=>({
-                        name:b,
-                      }))
-                    }
-
-                    rowKey="name"
-                    pagination={false}
-
-                    columns={[
-                      {
-                        title:'Branch',
-                        dataIndex:'name',
-                      },
-
-                      {
-                        title:'Action',
-
-                        render:(_,r)=>(
-                          <Button
-                            danger
-
-                            onClick={()=>
-                              deleteBranchMutation.mutate(r.name)
-                            }
-                          >
-                            Delete
-                          </Button>
-                        ),
-                      },
-                    ]}
-                  />
-                )}
-              </>
+              <BranchManager
+                branchName={branchName}
+                branches={branches}
+                branchLoading={branchLoading}
+                createBranchMutation={createBranchMutation}
+                deleteBranchMutation={deleteBranchMutation}
+                onBranchNameChange={setBranchName}
+              />
             ),
           },
 
@@ -510,68 +553,16 @@ useEffect(()=>{
         ]}
       />
 
-      <Modal
-        open={!!selectedFile}
-
-        onCancel={()=>
+      <FileViewer
+        selectedFile={selectedFile}
+        fileContent={fileContent}
+        fileLoading={fileLoading}
+        maxFileSize={MAX_FILE_SIZE}
+        getLanguage={getLanguage}
+        onClose={()=>
           setSelectedFile(null)
         }
-
-        footer={null}
-      >
-
-       {fileLoading?(
-  <Spin/>
-):(
-  <pre
-    style={{
-      maxHeight:500,
-      overflow:'auto',
-    }}
-  >
-
-    {(
-      typeof fileContent==='string'
-      &&
-      fileContent.length>MAX_FILE_SIZE
-    )?(
-      <div>
-
-        <div
-          style={{
-            marginBottom:12,
-            color:'#faad14',
-          }}
-        >
-          File too large for syntax highlighting.
-          Showing preview only.
-        </div>
-
-        <pre
-          style={{
-            whiteSpace:'pre-wrap',
-            wordBreak:'break-word',
-          }}
-        >
-          {fileContent.slice(0,MAX_FILE_SIZE)}
-        </pre>
-
-      </div>
-    ):(
-      <code
-        className={
-          `language-${getLanguage(selectedFile)}`
-        }
-      >
-        {fileContent||'No content available'}
-      </code>
-    )}
-
-  </pre>
-)}
-        
-
-      </Modal>
+      />
 
     </>
   )

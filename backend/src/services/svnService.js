@@ -243,19 +243,20 @@ async function getRevisionDiff(repoPath, revision) {
 
 // ─── CREATE BRANCH ──────────────────────
 
-async function createBranch(repoPath, branchName, fromRevision = 'HEAD', message = 'Create branch') {
+async function createBranch(repoPath, branchName, fromRevision = 'HEAD', message = 'Create branch', sourcePath = 'trunk') {
   try {
     const repoUrl = toFileUrl(repoPath);
+    const normalizedSource = String(sourcePath || 'trunk').replace(/^\/+/, '').replace(/\/+$/, '') || 'trunk';
 
     await svn(
       'copy',
-      `${repoUrl}/trunk@${fromRevision}`,
+      `${repoUrl}/${normalizedSource}@${fromRevision}`,
       `${repoUrl}/branches/${branchName}`,
       '-m',
       message
     );
 
-    logger.info(`Branch '${branchName}' created from ${fromRevision}`);
+    logger.info(`Branch '${branchName}' created from ${normalizedSource}@${fromRevision}`);
   } catch (err) {
     logger.error('Create branch error:', err.message);
     throw err;

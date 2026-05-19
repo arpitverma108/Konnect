@@ -1,33 +1,22 @@
 import {useMemo} from 'react'
+import {normalizeActivityEvent} from '../utils/activityModel'
 
 const useFormattedActivity=(logs=[])=>{
 
   return useMemo(()=>{
 
     return logs.map((item)=>{
+      const event=
+        normalizeActivityEvent(item)
 
       const action=
-        item?.action
-        ||
-        item?.description
-        ||
-        item?.message
-        ||
-        'System activity'
+        event.action
 
       const repo=
-        item?.repo_name
-        ||
-        item?.context
-        ||
-        ''
+        event.repoName
 
       const author=
-        item?.author
-        ||
-        item?.actor
-        ||
-        ''
+        event.actor
 
       const isRepoAction=
         action.includes('commit')
@@ -37,28 +26,31 @@ const useFormattedActivity=(logs=[])=>{
         || action.includes('tag')
 
       return{
-        ...item,
+        ...event,
 
         rawAction:action,
 
         category:
-          isRepoAction
+          event.eventLabel
+          ||
+          (
+            isRepoAction
             ?'Repository'
-            :'User Activity',
+            :'User Activity'
+          ),
 
         message:
-          repo
-          ?`[${repo}] ${action}`
-          :action,
+          event.message,
 
         author,
+        actor:
+          author,
 
         repoName:repo,
+        repo_name:repo,
 
         time:
-          item?.created_at
-          || item?.committed_at
-          || new Date(),
+          event.time,
       }
     })
 

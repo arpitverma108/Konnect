@@ -7,6 +7,10 @@ export const logout=async(navigate)=>{
   try{
 
     const refreshToken=
+      useAppStore
+        .getState()
+        .refreshToken
+      ||
       localStorage.getItem(
         'refreshToken'
       )
@@ -33,9 +37,6 @@ export const logout=async(navigate)=>{
     useAppStore
       .getState()
       .logout()
-
-    localStorage.removeItem('token')
-    localStorage.removeItem('refreshToken')
 
     navigate('/login',{
       replace:true,

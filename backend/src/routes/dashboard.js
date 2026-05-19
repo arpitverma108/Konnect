@@ -30,7 +30,7 @@ router.get('/stats', auth, wrap(async (req, res) => {
 // GET /api/dashboard/recent-commits?limit=20
 router.get('/recent-commits', auth, wrap(async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit || '20', 10), 100);
-  const rows  = await activitySvc.getGlobalActivity(db, { limit, offset: 0 });
+  const rows  = await activitySvc.getGlobalCommits(db, { limit, offset: 0 });
   res.json(rows);
 }));
 

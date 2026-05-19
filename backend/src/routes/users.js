@@ -15,6 +15,7 @@ const logger    = require('../config/logger');
 const apacheCfg = require('../config/apache');                          // FIX N1: moved to top
 const { createSvnUser }       = require('../utils/svn');
 const { revokeAllUserTokens } = require('../controllers/authController'); // FIX N1: moved to top
+const { logActivity, ACTIVITY_TYPES } = require('../services/activityLogger');
 
 // ─── CONSTANTS ─────────────────────────────
 
@@ -165,6 +166,29 @@ router.post(
       RETURNING id, username, role
     `, [username, email || null, fullName || null, hash, finalRole]);
 
+    // 📊 Log user creation — both structured activity and admin audit log
+    const newUserId = rows[0].id;
+    const action = `Created user account: ${username} with role "${finalRole}"`;
+
+    await logActivity(db, {
+      event_type: ACTIVITY_TYPES.USER_CREATE,
+      user_id: req.user.id,
+      action,
+      entity: 'user',
+      entity_id: newUserId,
+      metadata: {
+        username,
+        role: finalRole,
+        email: email || null,
+      },
+    });
+
+    // Also write to admin_logs so the event appears in the Audit Logs page
+    await db.query(
+      'INSERT INTO admin_logs (user_id, action, entity, entity_id) VALUES ($1,$2,$3,$4)',
+      [req.user.id, action, 'user', newUserId]
+    );
+
     try {
       await createSvnUser(username, req.body.password);
     } catch (err) {
@@ -278,11 +302,26 @@ router.put(
 
     // ── 5. Audit log (only if role actually changed) ───────────────────────
     if (incomingRole && incomingRole !== target.role) {
-      const action = `${req.user.username} (${requesterRole}) changed role of ${target.username} from "${target.role}" to "${incomingRole}"`;
+      const action = `Changed role of user "${target.username}" from "${target.role}" to "${incomingRole}"`;
       await db.query(
         'INSERT INTO admin_logs (user_id, action, entity, entity_id) VALUES ($1,$2,$3,$4)',
         [requesterId, action, 'user', targetId]
       );
+
+      // 📊 Log structured activity
+      await logActivity(db, {
+        event_type: ACTIVITY_TYPES.USER_ROLE_CHANGE,
+        user_id: requesterId,
+        action,
+        entity: 'user',
+        entity_id: targetId,
+        metadata: {
+          username: target.username,
+          old_role: target.role,
+          new_role: incomingRole,
+        },
+      });
+
       logger.info(action);
     }
 
@@ -418,16 +457,27 @@ router.put(
       await revokeAllUserTokens(client, targetId);
 
       // Audit log
-      const actorLabel = `${req.user.username} (${requesterRole})`;
-      const targetLabel = `${target.username} (${target.role})`;
       const action = isSelfChange
-        ? `${actorLabel} changed their own password`
-        : `${actorLabel} changed password for ${targetLabel}`;
+        ? `${req.user.username} changed their own password`
+        : `Changed password for user "${target.username}"`;
 
       await client.query(
         'INSERT INTO admin_logs (user_id, action, entity, entity_id) VALUES ($1,$2,$3,$4)',
         [requesterId, action, 'user', targetId]
       );
+
+      // 📊 Log structured activity
+      await logActivity(db, {
+        event_type: ACTIVITY_TYPES.USER_PASSWORD_CHANGE,
+        user_id: requesterId,
+        action,
+        entity: 'user',
+        entity_id: targetId,
+        metadata: {
+          username: target.username,
+          is_self_change: isSelfChange,
+        },
+      });
 
       await client.query('COMMIT');
     } catch (err) {
@@ -479,6 +529,18 @@ router.delete(
     const { username } = userRows[0];
 
     await db.query('DELETE FROM users WHERE id=$1', [req.params.id]);
+
+    // 📊 Log user deletion activity
+    await logActivity(db, {
+      event_type: ACTIVITY_TYPES.USER_DELETE,
+      user_id: req.user.id,
+      action: `Deleted user account: ${username}`,
+      entity: 'user',
+      entity_id: req.params.id,
+      metadata: {
+        username,
+      },
+    });
 
     // Remove from htpasswd file
     try {

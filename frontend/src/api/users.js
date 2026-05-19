@@ -2,12 +2,14 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import apiClient from './index'
+import {queryKeys} from '../lib/queryKeys'
+import {staleTimes,gcTimes} from '../lib/queryConfig'
 
 const KEYS = {
-  all: ['users'],
-  list: (params) => ['users', 'list', params],
-  detail: (id) => ['users', 'detail', String(id)],
-  me: ['users', 'me'],
+  all: queryKeys.users.all,
+  list: queryKeys.users.list,
+  detail: queryKeys.users.detail,
+  me: queryKeys.users.me,
 }
 
 // ─── API CALLS ─────────────────────────────────────────
@@ -73,7 +75,7 @@ export const useUser=(id)=>
     enabled:!!id,
 
     staleTime:
-      5*60*1000,
+      staleTimes.long,
   })
  
 
@@ -85,10 +87,10 @@ export const useMe = () =>
     retry: false,
 
     staleTime:
-      5 * 60 * 1000,
+      staleTimes.long,
 
     gcTime:
-      10 * 60 * 1000,
+      gcTimes.standard,
 
     refetchOnWindowFocus:
       false,

@@ -1,8 +1,22 @@
 import React from 'react'
-import { Avatar, Spin } from 'antd'
-import { GitCommit } from 'lucide-react'
+import { Avatar, Spin, Tag } from 'antd'
+import {
+  GitBranch,
+  GitCommit,
+  GitPullRequest,
+  KeyRound,
+  LogIn,
+  RefreshCw,
+  Tag as TagIcon,
+  UserPlus,
+  FolderPlus,
+} from 'lucide-react'
 import dayjs from 'dayjs'
 import relativeTime from 'dayjs/plugin/relativeTime'
+import {
+  getEventTypeColor,
+  getEventTypeLabel,
+} from '../../utils/activityModel'
 
 dayjs.extend(relativeTime)
 
@@ -10,7 +24,35 @@ const ActivityFeed = ({
   data = [],
   loading = false,
   title = "Recent Activity",
+  emptyText = "No recent activity",
 }) => {
+  const getIcon=(eventType)=>{
+    switch(eventType){
+      case 'commit':
+        return <GitCommit size={16}/>
+      case 'branch_create':
+        return <GitBranch size={16}/>
+      case 'tag_create':
+        return <TagIcon size={16}/>
+      case 'permission_update':
+      case 'permission':
+        return <KeyRound size={16}/>
+      case 'user_create':
+      case 'user':
+        return <UserPlus size={16}/>
+      case 'repo_create':
+      case 'repository':
+      case 'repo':
+        return <FolderPlus size={16}/>
+      case 'login':
+      case 'auth':
+        return <LogIn size={16}/>
+      case 'sync':
+        return <RefreshCw size={16}/>
+      default:
+        return <GitPullRequest size={16}/>
+    }
+  }
 
   return (
     <div className="premium-card">
@@ -44,7 +86,7 @@ const ActivityFeed = ({
             fontSize: 14,
           }}
         >
-          No activity found
+          {emptyText}
         </div>
       )}
 
@@ -57,9 +99,28 @@ const ActivityFeed = ({
           }}
         >
 
-          {data.map((act, i) => (
+          {data.map((act, i) => {
+            const eventType=
+              act.eventType ||
+              act.event_type ||
+              'system'
+
+            const repoName=
+              act.repoName ||
+              act.repo_name
+
+            const actor=
+              act.actor ||
+              act.author
+
+            return (
             <div
-              key={i}
+              key={
+                act.id ||
+                act.audit_id ||
+                act.revision ||
+                `${act.eventType || 'activity'}-${act.time || i}`
+              }
               style={{
                 display: 'flex',
                 gap: 12,
@@ -68,7 +129,7 @@ const ActivityFeed = ({
 
               <Avatar
                 size={32}
-                icon={<GitCommit size={16} />}
+                icon={getIcon(eventType)}
                 style={{
                   background: '#1f6feb',
                 }}
@@ -88,7 +149,12 @@ const ActivityFeed = ({
                       color: 'var(--text-main)',
                     }}
                   >
-                    {act.category || 'System'}
+                    <Tag
+                      color={act.eventColor || getEventTypeColor(eventType)}
+                      style={{ marginInlineEnd: 0 }}
+                    >
+                      {act.category || getEventTypeLabel(eventType)}
+                    </Tag>
                   </div>
 
                   <div
@@ -112,20 +178,32 @@ const ActivityFeed = ({
                   {act.message}
                 </div>
 
-                <div
-                  style={{
-                    marginTop: 6,
-                    fontSize: 13,
-                    color: 'var(--text-secondary)',
-                  }}
-                >
-                  {act.author}
-                </div>
+                {(actor||repoName)&&(
+                  <div
+                    style={{
+                      marginTop: 6,
+                      fontSize: 13,
+                      color: 'var(--text-secondary)',
+                    }}
+                  >
+                    {actor&&(
+                      <Tag style={{marginInlineEnd:6}}>
+                        {actor}
+                      </Tag>
+                    )}
+
+                    {repoName&&(
+                      <span>
+                        {repoName}
+                      </span>
+                    )}
+                  </div>
+                )}
 
               </div>
 
             </div>
-          ))}
+          )})}
 
         </div>
       )}

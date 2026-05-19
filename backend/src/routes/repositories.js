@@ -17,6 +17,7 @@ const authorize = require('../middleware/authorize');
 
 const svnSvc = require('../services/svnService');
 const authzSvc = require('../services/authzService');
+const { logActivity, ACTIVITY_TYPES } = require('../services/activityLogger');
 
 // ─── VALIDATION ─────────────────────────────
 
@@ -118,6 +119,8 @@ router.get('/', auth, wrap(async (req, res) => {
 
 // ─────────────────────────────────────────────
 // 🔥 GET SINGLE REPO
+// FIX: now also returns svn_url so TortoiseSVN clients get the correct
+//      checkout URL from the frontend.
 // ─────────────────────────────────────────────
 
 router.get('/:id', auth, wrap(async (req, res) => {
@@ -129,7 +132,13 @@ router.get('/:id', auth, wrap(async (req, res) => {
 
   if (!rows.length) return res.status(404).json({ error: "Not found" });
 
-  res.json(rows[0]);
+  const repo = rows[0];
+
+  // Build svn_url from config base URL + repo name (works even if column
+  // doesn't exist yet in older DB instances).
+  const svnUrl = repo.svn_url || `${apacheCfg.baseUrl}/${repo.name}`;
+
+  res.json({ ...repo, svn_url: svnUrl });
 }));
 
 // ─────────────────────────────────────────────
@@ -186,6 +195,21 @@ router.put(
         );
         return res.json(repo.rows[0]);
       }
+
+      // 📊 Log repository update activity
+      await logActivity(db, {
+        event_type: ACTIVITY_TYPES.REPO_UPDATE,
+        user_id: req.user.id,
+        action: `Updated repository: ${rows[0].name}`,
+        entity: 'repository',
+        entity_id: parseInt(repoId, 10),
+        repo_id: parseInt(repoId, 10),
+        metadata: {
+          old_name: existing[0].name,
+          new_name: rows[0].name,
+          description: rows[0].description,
+        },
+      });
 
       res.json(rows[0]);
     } catch (err) {
@@ -281,9 +305,24 @@ router.post(
       const repo = rows[0];
 
       await db.query(`
-        INSERT INTO permissions (repo_id,path,subject_type,subject_id,permission)
-        VALUES ($1,'/','user',$2,'rw')
+        INSERT INTO permissions (repo_id,path,subject_type,subject_id,permission,role)
+        VALUES ($1,'/','user',$2,'rw','owner')
       `, [repo.id, req.user.id]);
+
+      // 📊 Log repository creation
+      const action = `Created repository "${name}"${description ? ` - ${description}` : ''}`;
+      await logActivity(db, {
+        event_type: ACTIVITY_TYPES.REPO_CREATE,
+        user_id: req.user.id,
+        action,
+        entity: 'repository',
+        entity_id: repo.id,
+        repo_id: repo.id,
+        metadata: {
+          repo_name: name,
+          description: description || null,
+        },
+      });
 
       await authzSvc.rebuildAuthzFile(db);
 
@@ -455,13 +494,51 @@ router.get('/:id/tags', auth, wrap(async (req, res) => {
 
 // ─────────────────────────────────────────────
 // 🔥 CREATE BRANCH
+// FIX: improved error message when trunk doesn't exist yet
 // ─────────────────────────────────────────────
 
+const svnCopySourceSchema = Joi.string()
+  .trim()
+  .max(256)
+  .pattern(/^(\/)?(trunk|branches\/[a-zA-Z0-9._-]+|tags\/[a-zA-Z0-9._-]+)$/);
+
 const branchSchema = Joi.object({
-  branchName: Joi.string().pattern(/^[a-zA-Z0-9._-]+$/).min(1).max(64).required(),
-  fromRevision: Joi.number().integer().optional().default('HEAD'),
-  message: Joi.string().max(512).optional().default('Create branch')
-});
+  branchName: Joi.string()
+    .trim()
+    .pattern(/^[a-zA-Z0-9._-]+$/)
+    .min(1)
+    .max(64)
+    .required()
+    .messages({
+      'any.required': '"branchName" is required',
+      'string.empty': '"branchName" is required',
+      'string.pattern.base': '"branchName" may only contain letters, numbers, dots, underscores, and hyphens',
+    }),
+  fromRevision: Joi.alternatives()
+    .try(
+      Joi.number().integer().min(0),
+      Joi.string().trim().valid('HEAD')
+    )
+    .optional()
+    .default('HEAD'),
+  sourcePath: svnCopySourceSchema.optional(),
+  trunkPath: svnCopySourceSchema.optional(),
+  fromBranch: Joi.string()
+    .trim()
+    .pattern(/^[a-zA-Z0-9._-]+$/)
+    .min(1)
+    .max(64)
+    .optional(),
+  message: Joi.string().trim().max(512).optional().allow('').default('Create branch')
+})
+  .rename('name', 'branchName', {
+    ignoreUndefined: true,
+    override: false,
+  })
+  .rename('branch', 'branchName', {
+    ignoreUndefined: true,
+    override: false,
+  });
 
 router.post(
   '/:id/branches',
@@ -478,16 +555,17 @@ router.post(
     if (!rows.length) return res.status(404).json({ error: "Not found" });
 
     const repo = rows[0];
-    const { branchName, fromRevision, message } = req.body;
+    const { branchName, fromRevision, message, sourcePath, trunkPath, fromBranch } = req.body;
+    const branchSourcePath = sourcePath || trunkPath || (fromBranch ? `branches/${fromBranch}` : 'trunk');
 
     try {
-      const repoUrl = `file://${repo.disk_path}`;
-
-      await svnSvc.createBranch(repo.disk_path, branchName, fromRevision, message);
+      await svnSvc.createBranch(repo.disk_path, branchName, fromRevision, message || `Create branch '${branchName}'`, branchSourcePath);
 
       res.status(201).json({
         message: `Branch '${branchName}' created`,
-        branch: branchName
+        branch: branchName,
+        sourcePath: branchSourcePath,
+        fromRevision,
       });
     } catch (err) {
       logger.error('Branch creation failed', {
@@ -496,6 +574,18 @@ router.post(
         error: err.message,
         userId: req.user.id
       });
+
+      // FIX: surface a clear message when trunk has no commits yet
+      if (
+        err.message.includes('path not found') ||
+        err.message.includes('E200009') ||
+        err.message.includes('trunk')
+      ) {
+        return res.status(400).json({
+          error: "Cannot create branch: trunk has no commits yet. Make at least one commit to the repository before creating branches."
+        });
+      }
+
       res.status(500).json({ error: "Branch creation failed" });
     }
   })
@@ -636,8 +726,24 @@ router.delete('/:id', auth, authorize("super_admin"), wrap(async (req, res) => {
 
   if (!rows.length) return res.status(404).json({ error: "Not found" });
 
-  await svnSvc.deleteRepository(rows[0].disk_path);
-  await db.query('DELETE FROM repositories WHERE id=$1', [rows[0].id]);
+  const repo = rows[0];
+
+  await svnSvc.deleteRepository(repo.disk_path);
+  await db.query('DELETE FROM repositories WHERE id=$1', [repo.id]);
+
+  // 📊 Log repository deletion
+  const action = `Deleted repository "${repo.name}"`;
+  await logActivity(db, {
+    event_type: ACTIVITY_TYPES.REPO_DELETE,
+    user_id: req.user.id,
+    action,
+    entity: 'repository',
+    entity_id: repo.id,
+    metadata: {
+      repo_name: repo.name,
+      description: repo.description || null,
+    },
+  });
 
   await authzSvc.rebuildAuthzFile(db);
 
