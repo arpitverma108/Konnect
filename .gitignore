@@ -69,3 +69,20 @@ docker-compose.override.yml
 # ------------------------------
 *.pid
 *.seed
+.agents
+.codex
+
+# ------------------------------
+# Archives
+# ------------------------------
+*.zip
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+
+# ------------------------------
+# Cache
+# ------------------------------
+.eslintcache
+.stylelintcache
