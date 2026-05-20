@@ -1,0 +1,191 @@
+const authzGenerationEngine = require('../services/authzGenerationEngine');
+
+describe('AuthzGenerationEngine', () => {
+  describe('formatAuthzSubject', () => {
+    it('should format user subject', () => {
+      const perm = { subject_type: 'user', subject_id: 1 };
+      const result = authzGenerationEngine.formatAuthzSubject(perm);
+      expect(result).toBe('user_1');
+    });
+
+    it('should format group subject', () => {
+      const perm = { subject_type: 'group', subject_id: 2 };
+      const result = authzGenerationEngine.formatAuthzSubject(perm);
+      expect(result).toBe('@group_2');
+    });
+
+    it('should format anonymous subject', () => {
+      const perm = { subject_type: '_anonymous_' };
+      const result = authzGenerationEngine.formatAuthzSubject(perm);
+      expect(result).toBe('_anonymous_');
+    });
+
+    it('should throw on unknown subject type', () => {
+      const perm = { subject_type: 'unknown', subject_id: 1 };
+      expect(() => authzGenerationEngine.formatAuthzSubject(perm)).toThrow();
+    });
+  });
+
+  describe('formatAuthzAccess', () => {
+    it('should format read-only access', () => {
+      expect(authzGenerationEngine.formatAuthzAccess('read-only')).toBe('r');
+    });
+
+    it('should format read-write access', () => {
+      expect(authzGenerationEngine.formatAuthzAccess('read-write')).toBe('rw');
+    });
+
+    it('should format none access', () => {
+      expect(authzGenerationEngine.formatAuthzAccess('none')).toBe('');
+    });
+
+    it('should throw on unknown access level', () => {
+      expect(() => authzGenerationEngine.formatAuthzAccess('invalid')).toThrow();
+    });
+  });
+
+  describe('buildAuthzSection', () => {
+    it('should build valid authz section', () => {
+      const permissions = [
+        { subject_type: 'user', subject_id: 1, access_level: 'read-write' },
+        { subject_type: 'group', subject_id: 2, access_level: 'read-only' }
+      ];
+
+      const result = authzGenerationEngine.buildAuthzSection('myrepo', '/', permissions);
+
+      expect(result).toContain('[myrepo:/]');
+      expect(result).toContain('user_1=rw');
+      expect(result).toContain('@group_2=r');
+      expect(result).toContain('_anonymous_=');
+    });
+
+    it('should sort permissions deterministically', () => {
+      const permissions = [
+        { subject_type: 'user', subject_id: 3, access_level: 'read-write' },
+        { subject_type: 'user', subject_id: 1, access_level: 'read-write' },
+        { subject_type: 'group', subject_id: 2, access_level: 'read-only' }
+      ];
+
+      const result = authzGenerationEngine.buildAuthzSection('myrepo', '/trunk', permissions);
+      const lines = result.split('\n').filter(l => l && !l.startsWith('['));
+
+      // Should be sorted by subject
+      expect(lines[0]).toContain('@group_2');
+      expect(lines[1]).toContain('user_1');
+      expect(lines[2]).toContain('user_3');
+    });
+
+    it('should handle empty permissions', () => {
+      const result = authzGenerationEngine.buildAuthzSection('myrepo', '/', []);
+      expect(result).toContain('[myrepo:/]');
+      expect(result).toContain('_anonymous_=');
+    });
+  });
+
+  describe('validateAuthzFormat', () => {
+    it('should validate correct authz format', () => {
+      const content = `
+[repo:/]
+user_1=rw
+group_2=r
+_anonymous_=
+
+[repo:/trunk]
+user_1=r
+      `;
+
+      expect(() => authzGenerationEngine.validateAuthzFormat(content)).not.toThrow();
+    });
+
+    it('should reject invalid rules', () => {
+      const content = `
+[repo:/]
+invalid rule here
+      `;
+
+      expect(() => authzGenerationEngine.validateAuthzFormat(content)).toThrow();
+    });
+
+    it('should ignore comments and empty lines', () => {
+      const content = `
+# This is a comment
+
+[repo:/]
+user_1=rw
+
+# Another comment
+      `;
+
+      expect(() => authzGenerationEngine.validateAuthzFormat(content)).not.toThrow();
+    });
+  });
+
+  describe('buildAuthzContent', () => {
+    it('should build complete authz content', () => {
+      const repos = [
+        {
+          repo_name: 'proj1',
+          svn_path: '/svn/repos/proj1',
+          owner_id: 1,
+          permissions: [
+            { path_pattern: '/', subject_type: 'user', subject_id: 1, access_level: 'read-write' },
+            { path_pattern: '/trunk', subject_type: 'user', subject_id: 2, access_level: 'read-only' }
+          ]
+        },
+        {
+          repo_name: 'proj2',
+          svn_path: '/svn/repos/proj2',
+          owner_id: 2,
+          permissions: [
+            { path_pattern: '/', subject_type: 'user', subject_id: 2, access_level: 'read-write' }
+          ]
+        }
+      ];
+
+      const content = authzGenerationEngine.buildAuthzContent(repos);
+
+      expect(content).toContain('[proj1:/]');
+      expect(content).toContain('[proj1:/trunk]');
+      expect(content).toContain('[proj2:/]');
+      expect(content).toContain('user_1=rw');
+      expect(content).toContain('user_2=r');
+      expect(content).toContain('Generated by Konnect');
+    });
+
+    it('should handle repos with no permissions', () => {
+      const repos = [
+        {
+          repo_name: 'empty',
+          svn_path: '/svn/repos/empty',
+          owner_id: 1,
+          permissions: []
+        }
+      ];
+
+      const content = authzGenerationEngine.buildAuthzContent(repos);
+
+      expect(content).toContain('[empty:/]');
+      expect(content).toContain('_anonymous_=');
+    });
+
+    it('should filter out none access permissions', () => {
+      const repos = [
+        {
+          repo_name: 'test',
+          svn_path: '/svn/repos/test',
+          owner_id: 1,
+          permissions: [
+            { path_pattern: '/', subject_type: 'user', subject_id: 1, access_level: 'none' }
+          ]
+        }
+      ];
+
+      const content = authzGenerationEngine.buildAuthzContent(repos);
+
+      // Should only have anonymous deny
+      expect(content).toContain('[test:/]');
+      expect(content).toContain('_anonymous_=');
+      expect(content).not.toContain('user_1=');
+    });
+  });
+});

@@ -54,6 +54,10 @@ const schema = Joi.object({
         .default('http://localhost:3000/api/sync'),
     }),
 
+  HOOK_WEBHOOK_URL: Joi.string()
+    .uri({ scheme: ['http', 'https'] })
+    .default(`http://localhost:${process.env.PORT || 3000}/api/hooks/svn/post-commit`),
+
   // 🔐 HOOK SECURITY (IMPORTANT)
   SYNC_SECRET: Joi.string().min(16).required(),
 

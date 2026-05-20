@@ -20,6 +20,8 @@ export const useDashboardStats = () =>
     queryKey: queryKeys.dashboard.stats,
     queryFn: fetchStats,
     staleTime: staleTimes.short,
+    refetchInterval: 15000,
+    refetchOnWindowFocus: true,
   })
 
 export const useDashboardActivity = (
@@ -36,9 +38,10 @@ export const useDashboardActivity = (
       return res.activity || res.data || res.commits || res.items || []
     },
     staleTime: staleTimes.realtime,
+    refetchInterval: 15000,
     gcTime: 30_000,
     refetchOnMount: true,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
   })
 
 export const useCommitActivity = (days = 7) =>
@@ -63,4 +66,6 @@ export const useCommitActivity = (days = 7) =>
       })
     },
     staleTime: 20_000,
+    refetchInterval: 30000,
+    refetchOnWindowFocus: true,
   })

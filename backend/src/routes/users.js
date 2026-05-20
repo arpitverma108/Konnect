@@ -12,8 +12,7 @@ const auth      = require('../middleware/auth');
 const authorize = require('../middleware/authorize');
 const env       = require('../config/env');
 const logger    = require('../config/logger');
-const apacheCfg = require('../config/apache');                          // FIX N1: moved to top
-const { createSvnUser }       = require('../utils/svn');
+const svnManagementService = require('../services/svnManagementService');
 const { revokeAllUserTokens } = require('../controllers/authController'); // FIX N1: moved to top
 const { logActivity, ACTIVITY_TYPES } = require('../services/activityLogger');
 
@@ -189,13 +188,22 @@ router.post(
       [req.user.id, action, 'user', newUserId]
     );
 
+    let svnProvisioning = { success: true };
     try {
-      await createSvnUser(username, req.body.password);
+      await svnManagementService.provisionSvnUser(newUserId, password);
     } catch (err) {
-      logger.warn(`Failed to create SVN user ${username}: ${err.message}`);
+      svnProvisioning = { success: false, error: err.message };
+      logger.error('SVN provisioning failed during user creation', {
+        userId: newUserId,
+        username,
+        error: err.message,
+      });
     }
 
-    res.status(201).json(rows[0]);
+    res.status(201).json({
+      ...rows[0],
+      svnProvisioning,
+    });
   })
 );
 
@@ -487,17 +495,15 @@ router.put(
       client.release();
     }
 
-    // ── 5. Sync to Apache htpasswd ──────────────────────────────────────────
+    // ── 5. Update SVN password through the SVN management workflow ─────────
     try {
-      if (apacheCfg.htpasswdPath) {
-        const { execFile } = require('child_process');
-        const { promisify } = require('util');
-        const execFileAsync = promisify(execFile);
-        await execFileAsync('htpasswd', ['-b', apacheCfg.htpasswdPath, target.username, new_password]);
-        logger.info(`Password synced to htpasswd for user ${target.username}`);
-      }
+      await svnManagementService.updateSvnPassword(targetId, new_password);
     } catch (err) {
-      logger.warn(`Failed to sync password to htpasswd for ${target.username}: ${err.message}`);
+      logger.error('SVN password synchronization failed', {
+        userId: targetId,
+        username: target.username,
+        error: err.message,
+      });
     }
 
     logger.info(`Password changed for user ${target.username} (id=${targetId}) by ${req.user.username}`);
@@ -526,9 +532,24 @@ router.delete(
       return res.status(404).json({ error: 'User not found' });
     }
 
+    const targetId = parseInt(req.params.id, 10);
     const { username } = userRows[0];
 
-    await db.query('DELETE FROM users WHERE id=$1', [req.params.id]);
+    try {
+      await svnManagementService.deprovisionSvnUser(targetId);
+    } catch (err) {
+      logger.error('SVN deprovisioning failed during user deletion', {
+        userId: targetId,
+        username,
+        error: err.message,
+      });
+      return res.status(500).json({
+        error: 'User was not deleted because SVN deprovisioning failed',
+        details: err.message,
+      });
+    }
+
+    await db.query('DELETE FROM users WHERE id=$1', [targetId]);
 
     // 📊 Log user deletion activity
     await logActivity(db, {
@@ -536,35 +557,11 @@ router.delete(
       user_id: req.user.id,
       action: `Deleted user account: ${username}`,
       entity: 'user',
-      entity_id: req.params.id,
+      entity_id: targetId,
       metadata: {
         username,
       },
     });
-
-    // Remove from htpasswd file
-    try {
-      if (apacheCfg.htpasswdPath) {  // FIX N1: apacheCfg already required at top
-        const fs = require('fs').promises;
-        let content = '';
-        try {
-          content = await fs.readFile(apacheCfg.htpasswdPath, 'utf8');
-        } catch (err) {
-          if (err.code !== 'ENOENT') throw err;
-        }
-
-        const lines = content.split('\n');
-        const filtered = lines.filter(line => {
-          const [user] = line.split(':');
-          return user !== username;
-        });
-
-        await fs.writeFile(apacheCfg.htpasswdPath, filtered.join('\n'), 'utf8');
-        logger.info(`User ${username} removed from htpasswd`);
-      }
-    } catch (err) {
-      logger.warn(`Failed to remove user from htpasswd: ${err.message}`);
-    }
 
     res.json({ message: 'User deleted' });
   })

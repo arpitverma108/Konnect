@@ -14,7 +14,6 @@ import { Bell } from 'lucide-react'
 import {
   useNotifications,
   useNotificationCount,
-  useMarkNotificationsRead,
 } from '../api/notifications'
 import { useMe } from '../api/users'
 
@@ -56,9 +55,6 @@ const {
 }=useNotificationCount({
   enabled:!!me && isAdmin,
 })
-
-const markReadMutation=
-  useMarkNotificationsRead()
 
 const notifications=
   Array.isArray(notificationsRes?.list)
@@ -236,14 +232,6 @@ const notifications=
         dropdownContent
       }
 
-      onOpenChange={(isOpen) => {
-
-        if (isOpen) {
-          if(unreadCount>0){
-            markReadMutation.mutate()
-          }
-        }
-      }}
     >
 
       <Badge count={unreadCount}>

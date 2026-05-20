@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import apiClient from './index'
 import {queryKeys} from '../lib/queryKeys'
 import {staleTimes} from '../lib/queryConfig'
+import {cleanQueryParams} from '../utils/queryParams'
 
 const KEYS = {
   all: queryKeys.repositories.all,
@@ -33,6 +34,26 @@ const normalizePaginated = (res) => {
   }
 }
 
+const normalizeActivityParams = (params = {}) => {
+  const {
+    eventType,
+    event_type,
+    author,
+    actor,
+    startDate,
+    endDate,
+    ...rest
+  } = params
+
+  return cleanQueryParams({
+    ...rest,
+    author: author ?? actor,
+    event_type: event_type ?? eventType,
+    from: rest.from ?? startDate,
+    to: rest.to ?? endDate,
+  })
+}
+
 // REPOS
 export const getRepositories = (params = {}) =>
   apiClient.get('/repositories', { params })
@@ -54,7 +75,9 @@ export const updateRepository = (id, data) =>
 
 // ACTIVITY
 export const getRepoActivity = (repoId, params = {}) =>
-  apiClient.get(`/activity/repo/${repoId}`, { params })
+  apiClient.get(`/activity/repo/${repoId}`, {
+    params: normalizeActivityParams(params),
+  })
 
 // FILES
 export const getRepoFilesByPath = (repoId) =>
@@ -119,9 +142,12 @@ export const useDeleteRepository = () => {
 
 export const useRepoActivity = (repoId, params = {}) =>
   useQuery({
-    queryKey: KEYS.activity(repoId, params),
+    queryKey: KEYS.activity(repoId, normalizeActivityParams(params)),
     queryFn: () => getRepoActivity(repoId, params),
     enabled: !!repoId,
+    staleTime: staleTimes.realtime,
+    refetchInterval: 15000,
+    refetchOnWindowFocus: true,
     select: (res) => normalizeList(res),
   })
 
@@ -219,6 +245,14 @@ export const useSyncActivity = () => {
 
       qc.invalidateQueries({
         queryKey: queryKeys.activity.all,
+      })
+
+      qc.invalidateQueries({
+        queryKey: queryKeys.dashboard.stats,
+      })
+
+      qc.invalidateQueries({
+        queryKey: ['dashboard'],
       })
     },
   })

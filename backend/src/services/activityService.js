@@ -47,6 +47,98 @@ function withEventType(row) {
   };
 }
 
+function parseSvnlookChanged(changed = '') {
+  return String(changed || '')
+    .split(/\r?\n/)
+    .map(line => line.trimEnd())
+    .filter(Boolean)
+    .map(line => {
+      const match = line.match(/^(.{1,4})\s+(.+)$/);
+      if (!match) {
+        return { action: 'M', path: line.trim() };
+      }
+
+      return {
+        action: match[1].trim() || 'M',
+        path: match[2].trim(),
+      };
+    });
+}
+
+async function resolveRepoId(db, repoId, repoPath) {
+  if (repoId) return parseInt(repoId, 10);
+
+  const { rows } = await db.query(
+    'SELECT id FROM repositories WHERE disk_path = $1',
+    [repoPath]
+  );
+
+  if (!rows[0]) {
+    const err = new Error(`Repository not registered for path: ${repoPath}`);
+    err.statusCode = 404;
+    throw err;
+  }
+
+  return rows[0].id;
+}
+
+/**
+ * Store a single commit delivered by an SVN post-commit hook.
+ */
+async function recordCommitFromHook(db, payload = {}) {
+  const revision = parseInt(payload.revision, 10);
+  if (!Number.isInteger(revision) || revision < 0) {
+    const err = new Error('Invalid revision');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const repoId = await resolveRepoId(db, payload.repo_id, payload.repo_path);
+  const paths = Array.isArray(payload.paths_changed)
+    ? payload.paths_changed
+    : parseSvnlookChanged(payload.paths_changed);
+  const eventType = classifyActivityEvent(payload);
+  const message = payload.message || null;
+  const committedAt = payload.committed_at || new Date().toISOString();
+  const pathsJson = paths.length ? JSON.stringify(paths) : null;
+
+  const { rows } = await db.query(
+    `INSERT INTO activity (
+       repo_id, revision, author, message, committed_at, paths_changed,
+       event_type, action, entity, entity_id, metadata, created_at
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'commit', $2, $9, NOW())
+     ON CONFLICT (repo_id, revision) DO UPDATE
+       SET author        = EXCLUDED.author,
+           message       = EXCLUDED.message,
+           committed_at  = EXCLUDED.committed_at,
+           paths_changed = EXCLUDED.paths_changed,
+           event_type    = EXCLUDED.event_type,
+           action        = EXCLUDED.action,
+           entity        = EXCLUDED.entity,
+           entity_id     = EXCLUDED.entity_id,
+           metadata      = EXCLUDED.metadata
+     RETURNING *`,
+    [
+      repoId,
+      revision,
+      payload.author || null,
+      message,
+      committedAt,
+      pathsJson,
+      eventType,
+      message || `Committed revision ${revision}`,
+      JSON.stringify({
+        source: 'svn_post_commit_hook',
+        repo_path: payload.repo_path || null,
+      }),
+    ]
+  );
+
+  logger.info(`Commit activity recorded from hook: repo ${repoId} r${revision}`);
+  return rows[0];
+}
+
 /**
  * Sync SVN log for a single repository into the activity table.
  * Uses ON CONFLICT DO NOTHING so re-syncing is safe.
@@ -188,6 +280,8 @@ async function getCommitsPerDay(db, days = 7) {
 }
 
 module.exports = {
+  recordCommitFromHook,
+  parseSvnlookChanged,
   syncRepoActivity,
   getRepoActivity,
   getGlobalActivity,

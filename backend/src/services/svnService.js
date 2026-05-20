@@ -7,8 +7,8 @@ const fse           = require('fs-extra');
 const xml2js        = require('xml2js');
 
 const apacheCfg     = require('../config/apache');
-const env           = require('../config/env');
 const logger        = require('../config/logger');
+const hookSvc       = require('./hookService');
 
 const execFileAsync = promisify(execFile);
 
@@ -62,12 +62,13 @@ async function createRepository(repoPath) {
 
     const hookPath = path.join(repoPath, 'hooks', 'post-commit');
 
-    const hookContent = `#!/bin/bash
-curl -s -X POST "${env.SYNC_WEBHOOK_URL}" > /dev/null 2>&1
-`;
+    const hookContent = process.platform === 'win32'
+      ? hookSvc.generatePostCommitHook().windows
+      : hookSvc.generatePostCommitHook().unix;
 
     await fse.writeFile(hookPath, hookContent);
     await fse.chmod(hookPath, 0o755);
+    await execFileAsync('chmod', ['-R', '777', repoPath], { timeout: 10000 });
 
     logger.info(`Repository created: ${repoPath}`);
   } catch (err) {

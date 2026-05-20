@@ -13,8 +13,8 @@ module.exports = (required = 'read') => {
         return res.status(400).json({ error: "repoId missing" });
       }
 
-      // 🔓 super_admin bypass
-      if (req.user.role === 'super_admin') {
+      // 🔓 Platform admins bypass per-repository permission checks.
+      if (['admin', 'super_admin'].includes(req.user.role)) {
         return next();
       }
 

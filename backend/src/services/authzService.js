@@ -115,7 +115,7 @@ async function atomicReplaceFile(targetPath, content) {
   const tmpPath = path.join(dir, `.${base}.${process.pid}.${Date.now()}.tmp`);
 
   await fse.ensureDir(dir);
-  await fs.writeFile(tmpPath, content, { encoding: 'utf8', mode: 0o640 });
+  await fs.writeFile(tmpPath, content, { encoding: 'utf8', mode: 0o644 });
   await fsyncFile(tmpPath);
   await fs.rename(tmpPath, targetPath);
   await fsyncDirectory(dir);
@@ -338,7 +338,7 @@ async function rebuildAuthzFile(db, options = {}) {
       await fse.ensureFile(authzPath);
       const previous = await fse.readFile(authzPath, 'utf8').catch(() => '');
 
-      await fs.writeFile(backupPath, previous, { encoding: 'utf8', mode: 0o640 });
+      await fs.writeFile(backupPath, previous, { encoding: 'utf8', mode: 0o644 });
       await fsyncFile(backupPath).catch(err => logger.warn(`Backup fsync failed: ${err.message}`));
       await atomicReplaceFile(authzPath, content);
 

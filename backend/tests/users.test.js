@@ -26,6 +26,12 @@ jest.mock('../src/utils/svn', () => ({
   createSvnUser: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock('../src/services/svnManagementService', () => ({
+  provisionSvnUser: jest.fn().mockResolvedValue({ success: true }),
+  updateSvnPassword: jest.fn().mockResolvedValue({ success: true }),
+  deprovisionSvnUser: jest.fn().mockResolvedValue({ success: true }),
+}));
+
 jest.mock('../src/config/env', () => ({
   JWT_SECRET:    'test-secret-32-characters-long!!',
   BCRYPT_ROUNDS: 4,
@@ -58,6 +64,10 @@ const db  = require('../src/config/database');
 const { logActivity, ACTIVITY_TYPES } = require('../src/services/activityLogger');
 
 const JWT_SECRET = 'test-secret-32-characters-long!!';
+
+beforeEach(() => {
+  jest.clearAllMocks();
+});
 
 function makeToken(overrides = {}) {
   return jwt.sign(
@@ -196,21 +206,38 @@ describe('PUT /api/users/:id/password', () => {
   it('should return 403 when a viewer tries to change another user\'s password', async () => {
     const token = makeToken({ id: 10, role: 'viewer' });
     db.query.mockResolvedValueOnce({ rows: [{ token_version: 0, is_active: true }] });
+    db.query.mockResolvedValueOnce({
+      rows: [{
+        id: 99,
+        username: 'otheruser',
+        role: 'viewer',
+        password_hash: 'unused',
+        is_active: true,
+      }],
+    });
 
     const res = await request(app)
       .put('/api/users/99/password')
       .set('Authorization', `Bearer ${token}`)
-      .send({ password: 'newpassword123' });
+      .send({ new_password: 'newpassword123' });
 
     expect(res.status).toBe(403);
   });
 
   it('should allow a user to change their own password', async () => {
     const token = makeToken({ id: 5, role: 'viewer' });
+    const currentHash = await bcrypt.hash('oldpassword123', 4);
     db.query.mockResolvedValueOnce({ rows: [{ token_version: 0, is_active: true }] });
 
-    // getUser query
-    db.query.mockResolvedValueOnce({ rows: [{ username: 'testuser' }] });
+    db.query.mockResolvedValueOnce({
+      rows: [{
+        id: 5,
+        username: 'testuser',
+        role: 'viewer',
+        password_hash: currentHash,
+        is_active: true,
+      }],
+    });
 
     const client = mockClient(jest.fn()
       .mockResolvedValueOnce({ rows: [], rowCount: 0 }) // BEGIN
@@ -223,7 +250,7 @@ describe('PUT /api/users/:id/password', () => {
     const res = await request(app)
       .put('/api/users/5/password')
       .set('Authorization', `Bearer ${token}`)
-      .send({ password: 'newpassword123' });
+      .send({ old_password: 'oldpassword123', new_password: 'newpassword123' });
 
     expect(res.status).toBe(200);
     expect(res.body.message).toMatch(/invalidated/i);
@@ -234,7 +261,7 @@ describe('PUT /api/users/:id/password', () => {
 
     // Confirm token_version increment was part of the UPDATE call
     const updateCall = client.query.mock.calls.find(
-      args => typeof args[0] === 'string' && args[0].includes('token_version = token_version + 1')
+      args => typeof args[0] === 'string' && /token_version\s*=\s*token_version\s*\+\s*1/.test(args[0])
     );
     expect(updateCall).toBeDefined();
   });
@@ -246,7 +273,7 @@ describe('PUT /api/users/:id/password', () => {
     const res = await request(app)
       .put('/api/users/5/password')
       .set('Authorization', `Bearer ${token}`)
-      .send({ password: 'short' });
+      .send({ new_password: 'short' });
 
     expect(res.status).toBe(400);
   });

@@ -151,7 +151,7 @@ CREATE TABLE IF NOT EXISTS activity (
   user_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
   metadata      JSONB DEFAULT '{}',
   
-  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  created_at    TIMESTAMPTZ DEFAULT NOW()
 
 );
 
@@ -339,3 +339,217 @@ CREATE TRIGGER trg_permissions_updated_at
 -- CLEANUP EXPIRED REFRESH TOKENS (run periodically via cron)
 -- ================================
 -- DELETE FROM refresh_tokens WHERE expires_at < NOW() OR revoked = true;
+
+-- ============================================================
+-- SVN AUTOMATION TABLES (Enterprise-Grade Provisioning)
+-- ============================================================
+
+-- ================================
+-- SVN_USERS (SVN Authentication)
+-- Extends users table with SVN-specific data
+-- ================================
+CREATE TABLE IF NOT EXISTS svn_users (
+  id                 SERIAL PRIMARY KEY,
+  user_id            INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  svn_username       VARCHAR(64) NOT NULL UNIQUE,
+  password_hash_md5  TEXT NOT NULL, -- Apache MD5 format for htpasswd
+  last_sync_at       TIMESTAMPTZ,
+  sync_status        VARCHAR(20) DEFAULT 'pending'
+                     CHECK (sync_status IN ('pending', 'synced', 'failed')),
+  is_svn_enabled     BOOLEAN DEFAULT true,
+  created_at         TIMESTAMPTZ DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_svn_users_user_id ON svn_users(user_id);
+CREATE INDEX IF NOT EXISTS idx_svn_users_svn_username ON svn_users(svn_username);
+CREATE INDEX IF NOT EXISTS idx_svn_users_sync_status ON svn_users(sync_status);
+CREATE INDEX IF NOT EXISTS idx_svn_users_enabled ON svn_users(is_svn_enabled);
+
+-- ================================
+-- SVN_REPOSITORIES (SVN Repository Metadata)
+-- Extends repositories table with SVN-specific data
+-- ================================
+CREATE TABLE IF NOT EXISTS svn_repositories (
+  id                 SERIAL PRIMARY KEY,
+  repository_id      INTEGER NOT NULL UNIQUE REFERENCES repositories(id) ON DELETE CASCADE,
+  svn_path           VARCHAR(512) NOT NULL UNIQUE,
+  owner_id           INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  is_initialized     BOOLEAN DEFAULT false,
+  created_at         TIMESTAMPTZ DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_svn_repositories_repo_id ON svn_repositories(repository_id);
+CREATE INDEX IF NOT EXISTS idx_svn_repositories_owner_id ON svn_repositories(owner_id);
+CREATE INDEX IF NOT EXISTS idx_svn_repositories_path ON svn_repositories(svn_path);
+
+-- ================================
+-- SVN_PERMISSIONS (Fine-Grained Access Control)
+-- Per-path, per-subject (user/group) access control
+-- ================================
+CREATE TABLE IF NOT EXISTS svn_permissions (
+  id                 SERIAL PRIMARY KEY,
+  repository_id      INTEGER NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+  subject_type       VARCHAR(20) NOT NULL
+                     CHECK (subject_type IN ('user', 'group', '_anonymous_')),
+  subject_id         INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  -- For group-based permissions, subject_id references group ID (not enforced by FK to avoid ambiguity)
+  path_pattern       VARCHAR(512) DEFAULT '/',
+  access_level       VARCHAR(20) NOT NULL DEFAULT 'none'
+                     CHECK (access_level IN ('none', 'read-only', 'read-write')),
+  inherited_from_group BOOLEAN DEFAULT false,
+  created_at         TIMESTAMPTZ DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (repository_id, path_pattern, subject_type, subject_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_svn_permissions_repo ON svn_permissions(repository_id);
+CREATE INDEX IF NOT EXISTS idx_svn_permissions_subject ON svn_permissions(subject_type, subject_id);
+CREATE INDEX IF NOT EXISTS idx_svn_permissions_path ON svn_permissions(path_pattern);
+CREATE INDEX IF NOT EXISTS idx_svn_permissions_access ON svn_permissions(access_level);
+
+-- ================================
+-- AUTHZ_GENERATION_LOCKS (Distributed Concurrency Control)
+-- Prevents concurrent authz regeneration (critical for safety)
+-- ================================
+CREATE TABLE IF NOT EXISTS authz_generation_locks (
+  id                 SERIAL PRIMARY KEY,
+  lock_id            UUID NOT NULL UNIQUE,
+  acquired_at        TIMESTAMPTZ DEFAULT NOW(),
+  expires_at         TIMESTAMPTZ NOT NULL,
+  holder             VARCHAR(255), -- Node identifier for debugging
+  created_at         TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_authz_locks_lock_id ON authz_generation_locks(lock_id);
+CREATE INDEX IF NOT EXISTS idx_authz_locks_expires ON authz_generation_locks(expires_at);
+
+-- ================================
+-- AUTHZ_GENERATION_HISTORY (Audit Trail)
+-- Records all authz file regenerations for audit + recovery
+-- ================================
+CREATE TABLE IF NOT EXISTS authz_generation_history (
+  id                 SERIAL PRIMARY KEY,
+  generation_id      UUID NOT NULL UNIQUE,
+  started_at         TIMESTAMPTZ NOT NULL,
+  completed_at       TIMESTAMPTZ,
+  status             VARCHAR(20) NOT NULL DEFAULT 'pending'
+                     CHECK (status IN ('pending', 'success', 'failed', 'rolled_back')),
+  authz_hash         VARCHAR(64), -- SHA256 of generated file
+  error_message      TEXT,
+  affected_repos     INTEGER[] DEFAULT '{}',
+  triggered_by       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at         TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_authz_history_id ON authz_generation_history(generation_id);
+CREATE INDEX IF NOT EXISTS idx_authz_history_status ON authz_generation_history(status);
+CREATE INDEX IF NOT EXISTS idx_authz_history_created ON authz_generation_history(created_at DESC);
+
+-- ================================
+-- HTPASSWD_SYNC_HISTORY (htpasswd Synchronization Audit)
+-- Tracks all htpasswd file synchronizations
+-- ================================
+CREATE TABLE IF NOT EXISTS htpasswd_sync_history (
+  id                 SERIAL PRIMARY KEY,
+  sync_id            UUID NOT NULL UNIQUE,
+  started_at         TIMESTAMPTZ NOT NULL,
+  completed_at       TIMESTAMPTZ,
+  status             VARCHAR(20) NOT NULL DEFAULT 'pending'
+                     CHECK (status IN ('pending', 'success', 'failed')),
+  users_synced       INTEGER DEFAULT 0,
+  users_failed       TEXT[] DEFAULT '{}',
+  error_message      TEXT,
+  triggered_by       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at         TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_htpasswd_sync_id ON htpasswd_sync_history(sync_id);
+CREATE INDEX IF NOT EXISTS idx_htpasswd_sync_status ON htpasswd_sync_history(status);
+CREATE INDEX IF NOT EXISTS idx_htpasswd_sync_created ON htpasswd_sync_history(created_at DESC);
+
+-- ================================
+-- SVN_REPO_PROVISIONING_LOCKS (Repository Provisioning Locks)
+-- Prevents concurrent repository creation from corrupting filesystem
+-- ================================
+CREATE TABLE IF NOT EXISTS svn_repo_provisioning_locks (
+  id                 SERIAL PRIMARY KEY,
+  repository_id      INTEGER NOT NULL UNIQUE REFERENCES repositories(id) ON DELETE CASCADE,
+  lock_id            UUID NOT NULL UNIQUE,
+  acquired_at        TIMESTAMPTZ DEFAULT NOW(),
+  expires_at         TIMESTAMPTZ NOT NULL,
+  holder             VARCHAR(255),
+  created_at         TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_svn_repo_locks_repo_id ON svn_repo_provisioning_locks(repository_id);
+CREATE INDEX IF NOT EXISTS idx_svn_repo_locks_expires ON svn_repo_provisioning_locks(expires_at);
+
+-- ================================
+-- VIEWS FOR SVN MANAGEMENT
+-- ================================
+
+-- View: Flattened SVN repository permissions with user/group names
+CREATE OR REPLACE VIEW v_svn_repo_permissions AS
+SELECT
+  p.id AS permission_id,
+  p.repository_id,
+  r.name AS repository_name,
+  r.disk_path,
+  p.path_pattern,
+  p.subject_type,
+  p.subject_id,
+  CASE
+    WHEN p.subject_type = 'user' THEN u.username
+    WHEN p.subject_type = 'group' THEN g.name
+    WHEN p.subject_type = '_anonymous_' THEN '_anonymous_'
+  END AS subject_name,
+  p.access_level,
+  p.inherited_from_group,
+  p.created_at,
+  p.updated_at
+FROM svn_permissions p
+JOIN repositories r ON r.id = p.repository_id
+LEFT JOIN users u ON p.subject_type = 'user' AND u.id = p.subject_id
+LEFT JOIN groups g ON p.subject_type = 'group' AND p.subject_id = g.id;
+
+-- View: SVN users with synchronized status
+CREATE OR REPLACE VIEW v_svn_users_status AS
+SELECT
+  su.id AS svn_user_id,
+  u.id AS user_id,
+  u.username,
+  su.svn_username,
+  u.is_active,
+  su.is_svn_enabled,
+  su.sync_status,
+  su.last_sync_at,
+  CASE
+    WHEN NOT u.is_active THEN 'user_disabled'
+    WHEN NOT su.is_svn_enabled THEN 'svn_disabled'
+    WHEN su.sync_status = 'synced' THEN 'ready'
+    ELSE su.sync_status
+  END AS effective_status
+FROM svn_users su
+JOIN users u ON u.id = su.user_id;
+
+-- ================================
+-- TRIGGER: Update svn_users.updated_at
+-- ================================
+DROP TRIGGER IF EXISTS trg_svn_users_updated_at ON svn_users;
+CREATE TRIGGER trg_svn_users_updated_at
+  BEFORE UPDATE ON svn_users
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- Trigger: Update svn_repositories.updated_at
+DROP TRIGGER IF EXISTS trg_svn_repositories_updated_at ON svn_repositories;
+CREATE TRIGGER trg_svn_repositories_updated_at
+  BEFORE UPDATE ON svn_repositories
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- Trigger: Update svn_permissions.updated_at
+DROP TRIGGER IF EXISTS trg_svn_permissions_updated_at ON svn_permissions;
+CREATE TRIGGER trg_svn_permissions_updated_at
+  BEFORE UPDATE ON svn_permissions
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at();

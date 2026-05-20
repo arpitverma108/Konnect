@@ -23,6 +23,12 @@ jest.mock('../src/utils/svn', () => ({
   createSvnUser: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock('../src/services/svnManagementService', () => ({
+  provisionSvnUser: jest.fn().mockResolvedValue({ success: true }),
+  updateSvnPassword: jest.fn().mockResolvedValue({ success: true }),
+  deprovisionSvnUser: jest.fn().mockResolvedValue({ success: true }),
+}));
+
 jest.mock('../src/config/env', () => ({
   JWT_SECRET:    'test-secret-32-characters-long!!',
   BCRYPT_ROUNDS: 4,

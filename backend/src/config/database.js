@@ -62,4 +62,5 @@ process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
 module.exports = pool;
+module.exports.getClient = () => pool.connect();
 module.exports.healthCheck = healthCheck;

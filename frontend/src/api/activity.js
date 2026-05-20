@@ -7,11 +7,32 @@ import apiClient from './index'
 import {normalizePaginated} from '../utils/normalize'
 import {cleanQueryParams} from '../utils/queryParams'
 import {queryKeys} from '../lib/queryKeys'
+import {staleTimes} from '../lib/queryConfig'
+
+const normalizeActivityParams=(params={})=>{
+  const {
+    eventType,
+    event_type,
+    author,
+    actor,
+    startDate,
+    endDate,
+    ...rest
+  }=params
+
+  return cleanQueryParams({
+    ...rest,
+    author:author ?? actor,
+    event_type:event_type ?? eventType,
+    from:rest.from ?? startDate,
+    to:rest.to ?? endDate,
+  })
+}
 
 export const getActivity=(params={})=>
   apiClient.get('/activity',{
     params:
-      cleanQueryParams(params),
+      normalizeActivityParams(params),
   })
 
 export const useActivity=(
@@ -27,7 +48,7 @@ export const useActivity=(
       :paramsOrLimit
 
   const queryParams=
-    cleanQueryParams(params)
+    normalizeActivityParams(params)
 
   return useQuery({
     queryKey:[
@@ -42,6 +63,15 @@ export const useActivity=(
 
     placeholderData:
       options.placeholderData ?? keepPreviousData,
+
+    staleTime:
+      options.staleTime ?? staleTimes.realtime,
+
+    refetchInterval:
+      options.refetchInterval ?? 15000,
+
+    refetchOnWindowFocus:
+      true,
 
     select:(res)=>{
       const paginated=

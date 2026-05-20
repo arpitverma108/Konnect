@@ -4,7 +4,77 @@
 const path      = require('path');
 const fse       = require('fs-extra');
 const apacheCfg = require('../config/apache');
+const env       = require('../config/env');
 const logger    = require('../config/logger');
+
+function shellQuote(value = '') {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function windowsQuote(value = '') {
+  return String(value).replace(/"/g, '\\"');
+}
+
+function postCommitHookUrl() {
+  return env.HOOK_WEBHOOK_URL;
+}
+
+function generatePostCommitHook() {
+  const hookUrl = postCommitHookUrl();
+  const syncSecret = env.SYNC_SECRET;
+  const svnlookPath = env.SVNLOOK_PATH || process.env.SVNLOOK_PATH || 'svnlook';
+
+  return {
+    unix: `#!/bin/bash
+# post-commit hook - sends each successful SVN commit to Konnect.
+
+REPOS="$1"
+REV="$2"
+SVNLOOK=${shellQuote(svnlookPath)}
+HOOK_URL=${shellQuote(hookUrl)}
+SYNC_SECRET=${shellQuote(syncSecret)}
+
+AUTHOR=$("$SVNLOOK" author -r "$REV" "$REPOS" 2>/dev/null)
+MESSAGE=$("$SVNLOOK" log -r "$REV" "$REPOS" 2>/dev/null)
+COMMITTED_AT=$("$SVNLOOK" date -r "$REV" "$REPOS" 2>/dev/null)
+PATHS_CHANGED=$("$SVNLOOK" changed -r "$REV" "$REPOS" 2>/dev/null)
+
+curl -fsS -m 10 -X POST "$HOOK_URL" \\
+  -H "X-Sync-Secret: $SYNC_SECRET" \\
+  --data-urlencode "repo_path=$REPOS" \\
+  --data-urlencode "revision=$REV" \\
+  --data-urlencode "author=$AUTHOR" \\
+  --data-urlencode "message=$MESSAGE" \\
+  --data-urlencode "committed_at=$COMMITTED_AT" \\
+  --data-urlencode "paths_changed=$PATHS_CHANGED" \\
+  >/dev/null 2>&1
+
+exit 0
+`,
+    windows: `@echo off
+REM post-commit hook - sends each successful SVN commit to Konnect.
+
+SET REPOS=%1
+SET REV=%2
+SET SVNLOOK=${windowsQuote(svnlookPath)}
+SET HOOK_URL=${windowsQuote(hookUrl)}
+SET SYNC_SECRET=${windowsQuote(syncSecret)}
+
+FOR /F "delims=" %%A IN ('"%SVNLOOK%" author -r %REV% "%REPOS%"') DO SET AUTHOR=%%A
+FOR /F "delims=" %%D IN ('"%SVNLOOK%" date -r %REV% "%REPOS%"') DO SET COMMITTED_AT=%%D
+
+curl -fsS -m 10 -X POST "%HOOK_URL%" ^
+  -H "X-Sync-Secret: %SYNC_SECRET%" ^
+  --data-urlencode "repo_path=%REPOS%" ^
+  --data-urlencode "revision=%REV%" ^
+  --data-urlencode "author=%AUTHOR%" ^
+  --data-urlencode "committed_at=%COMMITTED_AT%" ^
+  >NUL 2>NUL
+
+exit /b 0
+`,
+  };
+}
 
 // Hook script templates
 const TEMPLATES = {
@@ -52,25 +122,12 @@ exit /b 0
 `,
   },
   'post-commit': {
-    unix: `#!/bin/bash
-# post-commit hook — runs after each successful commit
-REPOS="$1"
-REV="$2"
-SVNLOOK="${process.env.SVNLOOK_PATH || 'svnlook'}"
-
-# Add post-commit actions here (e.g. email notifications, CI triggers)
-# AUTHOR=$($SVNLOOK author -r "$REV" "$REPOS")
-# MSG=$($SVNLOOK log -r "$REV" "$REPOS")
-# echo "Committed r$REV by $AUTHOR: $MSG"
-
-exit 0
-`,
-    windows: `@echo off
-REM post-commit hook — Windows version
-SET REPOS=%1
-SET REV=%2
-exit /b 0
-`,
+    get unix() {
+      return generatePostCommitHook().unix;
+    },
+    get windows() {
+      return generatePostCommitHook().windows;
+    },
   },
   'pre-revprop-change': {
     unix: `#!/bin/bash
@@ -217,5 +274,8 @@ module.exports = {
   saveHook,
   toggleHook,
   deleteHook,
+  deployHook,
+  generatePostCommitHook,
+  postCommitHookUrl,
   TEMPLATES,
 };

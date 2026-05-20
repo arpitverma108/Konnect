@@ -8,7 +8,10 @@ const db         = require('../config/database');
 const validate   = require('../middleware/validate');
 const wrap       = require('../middleware/asyncWrapper');
 const hookSvc    = require('../services/hookService');
+const activitySvc = require('../services/activityService');
 const apacheCfg  = require('../config/apache');
+const logger     = require('../config/logger');
+const redis      = require('../config/redis');
 
 const auth            = require('../middleware/auth');
 const authorize       = require('../middleware/authorize');
@@ -70,7 +73,20 @@ const WARN_PATTERNS = [
 ];
 
 function scanHookContent(content) {
+  const allowedKonnectHook = typeof hookSvc.postCommitHookUrl === 'function'
+    ? hookSvc.postCommitHookUrl()
+    : process.env.HOOK_WEBHOOK_URL;
+  const normalizedContent = String(content || '');
+  const isKonnectPostCommitHook =
+    allowedKonnectHook &&
+    normalizedContent.includes(allowedKonnectHook) &&
+    normalizedContent.includes('X-Sync-Secret');
+
   for (const { re, reason } of BLOCKED_PATTERNS) {
+    if (isKonnectPostCommitHook && reason === 'curl is not allowed in hooks') {
+      continue;
+    }
+
     if (re.test(content)) {
       return { blocked: true, reason };
     }
@@ -108,12 +124,65 @@ const toggleSchema = Joi.object({
   isEnabled: Joi.boolean().required(),
 });
 
+const postCommitSchema = Joi.object({
+  repo_id: Joi.number().integer().positive().optional(),
+  repo_path: Joi.string().max(1024).when('repo_id', {
+    is: Joi.exist(),
+    then: Joi.optional(),
+    otherwise: Joi.required(),
+  }),
+  revision: Joi.number().integer().min(0).required(),
+  author: Joi.string().allow('', null).max(128).optional(),
+  message: Joi.string().allow('', null).max(10000).optional(),
+  committed_at: Joi.string().allow('', null).max(128).optional(),
+  paths_changed: Joi.alternatives().try(
+    Joi.string().allow('', null),
+    Joi.array().items(Joi.object({
+      action: Joi.string().allow('').max(8),
+      path: Joi.string().allow('').max(2048),
+    }))
+  ).optional(),
+});
+
 // ─── Routes ──────────────────────────────────
 
 // Public: hook type templates
 router.get('/templates', (req, res) => {
   res.json(Object.keys(hookSvc.TEMPLATES));
 });
+
+// SVN post-commit ingestion. This is called by repository hook scripts, not by browsers.
+router.post(
+  '/svn/post-commit',
+  validate(postCommitSchema),
+  wrap(async (req, res) => {
+    const headerSecret = req.headers['x-sync-secret'];
+    if (!headerSecret || headerSecret !== process.env.SYNC_SECRET) {
+      return res.status(403).json({ error: 'Invalid sync secret' });
+    }
+
+    const activity = await activitySvc.recordCommitFromHook(db, req.body);
+
+    if (redis.isAvailable()) {
+      await Promise.allSettled([
+        redis.delPattern('activity:*'),
+      ]);
+    }
+
+    logger.info('SVN post-commit hook ingested', {
+      repo_id: activity.repo_id,
+      revision: activity.revision,
+      author: activity.author,
+    });
+
+    res.status(202).json({
+      message: 'Commit recorded',
+      activity_id: activity.id,
+      repo_id: activity.repo_id,
+      revision: activity.revision,
+    });
+  })
+);
 
 // Get all hooks for a repo
 router.get(

@@ -35,7 +35,8 @@ const ACTIVITY_SELECT = `
     a.user_id,
     a.metadata,
     a.created_at,
-    a.paths_changed
+    a.paths_changed,
+    COUNT(*) OVER() AS total_count
   FROM activity a
   LEFT JOIN repositories r ON r.id = a.repo_id
   LEFT JOIN users        u ON u.id = a.user_id
@@ -43,6 +44,36 @@ const ACTIVITY_SELECT = `
 
 // Ordering that works for both SVN (committed_at) and system events (created_at only)
 const ACTIVITY_ORDER = `ORDER BY COALESCE(a.committed_at, a.created_at) DESC, a.id DESC`;
+
+function parseLimit(value, fallback = 10, max = 100) {
+  const parsed = parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.min(parsed, max);
+}
+
+function parseOffset(query = {}, limit) {
+  if (query.offset !== undefined) {
+    const offset = parseInt(query.offset, 10);
+    return Number.isFinite(offset) && offset > 0 ? offset : 0;
+  }
+
+  const page = parseInt(query.page, 10);
+  if (!Number.isFinite(page) || page <= 1) return 0;
+  return (page - 1) * limit;
+}
+
+function normalizeActivityQuery(query = {}) {
+  return {
+    actor: query.actor || query.author || query.user || null,
+    eventType: query.event_type || query.eventType || query.type || null,
+    repo: query.repo || query.repo_id || null,
+    repoName: query.repo_name || query.repository || null,
+    search: query.search || null,
+    from: query.from || query.startDate || null,
+    to: query.to || query.endDate || null,
+    cursor: query.cursor || null,
+  };
+}
 
 function formatRow(r) {
   const eventType = r.event_type || 'commit';
@@ -58,6 +89,7 @@ function formatRow(r) {
 
     // Structured filter fields — frontend should use these directly
     actor,
+    author:       r.author || actor,
     repo:         r.repo_name || null,
     repo_name:    r.repo_name || null,
     repo_id:      r.repo_id   || null,
@@ -86,11 +118,18 @@ router.get(
   checkPermission('read'),
   wrap(async (req, res) => {
     const { repoId } = req.params;
-    const limit  = Math.min(parseInt(req.query.limit) || 10, 50);
-    const cursor = req.query.cursor; // ISO timestamp
-    const { actor, from, to, event_type } = req.query;
+    const limit = parseLimit(req.query.limit, 10, 100);
+    const offset = parseOffset(req.query, limit);
+    const {
+      actor,
+      from,
+      to,
+      eventType,
+      search,
+      cursor,
+    } = normalizeActivityQuery(req.query);
 
-    const cacheKey = `activity:repo:${req.user.id}:${repoId}:${cursor || 'first'}:${actor || ''}:${from || ''}:${to || ''}:${event_type || ''}`;
+    const cacheKey = `activity:repo:${req.user.id}:${repoId}:${cursor || offset}:${actor || ''}:${from || ''}:${to || ''}:${eventType || ''}:${search || ''}:${limit}`;
     if (redis.isAvailable()) {
       try {
         const cached = await redis.get(cacheKey);
@@ -111,13 +150,23 @@ router.get(
       values.push(actor);
       index++;
     }
-    if (event_type) { query += ` AND a.event_type = $${index++}`;                              values.push(event_type); }
+    if (eventType)  { query += ` AND a.event_type = $${index++}`;                              values.push(eventType); }
+    if (search) {
+      query += ` AND (
+        a.message ILIKE '%' || $${index} || '%'
+        OR a.action ILIKE '%' || $${index} || '%'
+        OR a.author ILIKE '%' || $${index} || '%'
+        OR r.name ILIKE '%' || $${index} || '%'
+      )`;
+      values.push(search);
+      index++;
+    }
     if (from)       { query += ` AND COALESCE(a.committed_at, a.created_at) >= $${index++}`;   values.push(from); }
     if (to)         { query += ` AND COALESCE(a.committed_at, a.created_at) <= $${index++}`;   values.push(to); }
     if (cursor)     { query += ` AND COALESCE(a.committed_at, a.created_at) < $${index++}`;    values.push(cursor); }
 
-    query += ` ${ACTIVITY_ORDER} LIMIT $${index}`;
-    values.push(limit);
+    query += ` ${ACTIVITY_ORDER} LIMIT $${index++} OFFSET $${index}`;
+    values.push(limit, offset);
 
     const { rows } = await db.query(query, values);
     const lastRow  = rows[rows.length - 1];
@@ -128,6 +177,9 @@ router.get(
     const response = {
       repository: repo.rows[0].name,
       count:      rows.length,
+      total:      parseInt(rows[0]?.total_count || rows.length || '0', 10),
+      limit,
+      offset,
       nextCursor,
       activity:   rows.map(formatRow),
     };
@@ -154,11 +206,20 @@ router.get(
   '/',
   auth,
   wrap(async (req, res) => {
-    const limit  = Math.min(parseInt(req.query.limit) || 10, 50);
-    const cursor = req.query.cursor;
-    const { actor, event_type, repo, repo_name } = req.query;
+    const limit = parseLimit(req.query.limit, 10, 100);
+    const offset = parseOffset(req.query, limit);
+    const {
+      actor,
+      eventType,
+      repo,
+      repoName,
+      search,
+      from,
+      to,
+      cursor,
+    } = normalizeActivityQuery(req.query);
 
-    const cacheKey = `activity:global:${req.user.id}:${cursor || 'first'}:${actor || ''}:${event_type || ''}:${repo || ''}:${repo_name || ''}`;
+    const cacheKey = `activity:global:${req.user.id}:${cursor || offset}:${actor || ''}:${eventType || ''}:${repo || ''}:${repoName || ''}:${search || ''}:${from || ''}:${to || ''}:${limit}`;
     if (redis.isAvailable()) {
       try {
         const cached = await redis.get(cacheKey);
@@ -203,19 +264,46 @@ router.get(
       index++;
     }
 
-    if (event_type) {
+    if (eventType) {
       query += ` AND a.event_type = $${index++}`;
-      values.push(event_type);
+      values.push(eventType);
     }
 
     if (repo) {
-      query += ` AND a.repo_id = $${index++}`;
-      values.push(repo);
+      if (/^\d+$/.test(String(repo))) {
+        query += ` AND a.repo_id = $${index++}`;
+        values.push(repo);
+      } else {
+        query += ` AND r.name ILIKE '%' || $${index++} || '%'`;
+        values.push(repo);
+      }
     }
 
-    if (repo_name) {
+    if (repoName) {
       query += ` AND r.name ILIKE '%' || $${index++} || '%'`;
-      values.push(repo_name);
+      values.push(repoName);
+    }
+
+    if (search) {
+      query += ` AND (
+        a.message ILIKE '%' || $${index} || '%'
+        OR a.action ILIKE '%' || $${index} || '%'
+        OR a.author ILIKE '%' || $${index} || '%'
+        OR u.username ILIKE '%' || $${index} || '%'
+        OR r.name ILIKE '%' || $${index} || '%'
+      )`;
+      values.push(search);
+      index++;
+    }
+
+    if (from) {
+      query += ` AND COALESCE(a.committed_at, a.created_at) >= $${index++}`;
+      values.push(from);
+    }
+
+    if (to) {
+      query += ` AND COALESCE(a.committed_at, a.created_at) <= $${index++}`;
+      values.push(to);
     }
 
     // Cursor pagination — works for both SVN (committed_at) and system events (created_at)
@@ -224,8 +312,8 @@ router.get(
       values.push(cursor);
     }
 
-    query += ` ${ACTIVITY_ORDER} LIMIT $${index}`;
-    values.push(limit);
+    query += ` ${ACTIVITY_ORDER} LIMIT $${index++} OFFSET $${index}`;
+    values.push(limit, offset);
 
     const { rows } = await db.query(query, values);
     const lastRow    = rows[rows.length - 1];
@@ -235,6 +323,9 @@ router.get(
 
     const response = {
       count:      rows.length,
+      total:      parseInt(rows[0]?.total_count || rows.length || '0', 10),
+      limit,
+      offset,
       nextCursor,
       activity:   rows.map(formatRow),
     };

@@ -9,6 +9,7 @@ import apiClient from './index'
 import {queryKeys} from '../lib/queryKeys'
 import {staleTimes} from '../lib/queryConfig'
 import {normalizePaginated} from '../utils/normalize'
+import {cleanQueryParams} from '../utils/queryParams'
 
 const normalize=(res)=>{
   const paginated=
@@ -55,13 +56,16 @@ export const useNotifications=(
   useQuery({
 
     queryKey:[
-      ...queryKeys.notifications.list(params),
+      ...queryKeys.notifications.list(cleanQueryParams(params)),
     ],
 
     queryFn:()=>
       apiClient.get(
         '/notifications',
-        {params}
+        {
+          params:
+            cleanQueryParams(params),
+        }
       ),
 
     enabled:

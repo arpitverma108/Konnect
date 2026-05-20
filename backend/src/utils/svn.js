@@ -1,15 +1,7 @@
 'use strict';
 
-const { execFile } = require('child_process');
-const { promisify } = require('util');
-
-const execFileAsync = promisify(execFile);
-
-const HT_PASSWD_PATH = process.env.HTPASSWD_PATH;
-
-if (!HT_PASSWD_PATH) {
-  throw new Error("HTPASSWD_PATH env var is required");
-}
+const db = require('../config/database');
+const svnManagementService = require('../services/svnManagementService');
 
 // ✅ Strong validation
 function validateUsername(username) {
@@ -36,17 +28,16 @@ async function createSvnUser(username, password) {
     validateUsername(username);
     validatePassword(password);
 
-    // -b → batch mode
-    // -c → create file (optional, use only first time)
-    const args = ['-b', HT_PASSWD_PATH, username, password];
+    const { rows } = await db.query(
+      'SELECT id FROM users WHERE username = $1',
+      [username]
+    );
 
-    const { stdout, stderr } = await execFileAsync('htpasswd', args);
-
-    if (stderr) {
-      console.warn("HTPASSWD WARNING:", stderr);
+    if (!rows[0]) {
+      throw new Error(`User '${username}' not found`);
     }
 
-    return stdout || `User ${username} created successfully`;
+    return await svnManagementService.provisionSvnUser(rows[0].id, password);
 
   } catch (error) {
     console.error("SVN USER CREATION ERROR:", error.message);

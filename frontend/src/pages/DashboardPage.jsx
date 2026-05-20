@@ -20,11 +20,6 @@ import useRole from '../hooks/useRole'
 import PageLoader from '../components/common/PageLoader'
 import PageError from '../components/common/PageError'
 
-import dayjs from 'dayjs'
-import utc from 'dayjs/plugin/utc'
-
-dayjs.extend(utc)
-
 const {Title}=Typography
 
 const DashboardPage=()=>{
@@ -102,17 +97,6 @@ const DashboardPage=()=>{
       }))
       .filter((item)=>item.date)
 
-  const commitsToday=
-    commits.filter(
-      (c)=>
-        c?.date
-        &&
-        dayjs(c.date).isSame(
-          dayjs(),
-          'day'
-        )
-    ).length
-
   return(
     <div
       style={{
@@ -129,7 +113,7 @@ const DashboardPage=()=>{
       <StatCards
         stats={{
           ...stats,
-          commitsToday,
+          commitsToday: stats?.commitsToday ?? 0,
         }}
         loading={statsLoading}
       />

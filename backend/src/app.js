@@ -23,6 +23,7 @@ const hookRoutes        = require('./routes/hooks');
 const activityRoutes    = require('./routes/activity');
 const dashboardRoutes   = require('./routes/dashboard');
 const notificationRoutes = require('./routes/notifications');
+const svnRoutes         = require('./routes/svn');
 
 const app = express();
 
@@ -96,6 +97,7 @@ app.use('/api/dashboard',     dashboardRoutes);
 app.use('/api/auth',          authRoutes);
 app.use('/api/sync',          syncRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/svn',           svnRoutes);
 
 // ─── 404 ──────────────────────────────────────────────────────────────────
 app.use((_req, res) => {
